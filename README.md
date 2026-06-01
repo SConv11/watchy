@@ -1,111 +1,112 @@
-# Watchy
+# Watchy（看门狗）
 
-A stock monitoring daemon that sits on top of the [TradingAgents](https://github.com/anthropics/TradingAgents) multi-agent LLM trading framework. Watchy watches your watchlist so you don't have to — cheap technical scans every hour, full-depth analysis once a day, and position-aware advice delivered to Telegram.
+基于 [TradingAgents](https://github.com/anthropics/TradingAgents) 多智能体 LLM 交易框架的股票监控守护进程（daemon）。Watchy 帮你盯着自选股（watchlist）——每小时跑一次零成本的 технический指标扫描（indicator scan），每天跑一次全深度分析（full-depth analysis），并通过 Telegram 推送持仓感知的交易建议（position-aware advice）。
 
-## Architecture
+## 架构（Architecture）
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                  Watchy Daemon                    │
+│                  Watchy 守护进程                   │
 │                                                   │
-│  Tier 1 (hourly)          Tier 2 (daily)          │
-│  ─────────────            ─────────────           │
-│  OHLCV + indicators       Full 4-analyst          │
-│  No LLM calls             pipeline                │
-│       │                   + debate                │
-│       │                   + risk mgmt             │
-│       ▼                        │                  │
-│  Signal breach?                │                  │
-│       │                        │                  │
-│    ┌──┴──┐                     │                  │
-│    │ Yes │───→ Graduated ──────┘                  │
-│    │     │    analyst subset                      │
-│    │ No  │───→ Update state,                      │
-│    └─────┘    exit (no cost)                      │
+│  第一层 Tier 1（每小时）      第二层 Tier 2（每天）   │
+│  ──────────────────────      ──────────────────  │
+│  OHLCV + 技术指标             完整四分析师流水线      │
+│  不调用 LLM                   (pipeline)           │
+│       │                       + 辩论 (debate)      │
+│       │                       + 风险管理 (risk)    │
+│       ▼                            │              │
+│  触发信号？                        │              │
+│  (signal breach?)                 │              │
+│       │                            │              │
+│    ┌──┴──┐                         │              │
+│    │ 是  │───→ 分级分析 ────────────┘              │
+│    │     │    (graduated subset)                  │
+│    │ 否  │───→ 更新状态,                           │
+│    └─────┘    退出（零成本）                        │
 │                                                   │
-│  After every pipeline run:                        │
-│    Schwab position → LLM advisor → Telegram       │
+│  每次分析完成后：                                   │
+│    Schwab 持仓 → LLM 顾问 → Telegram 推送          │
 └─────────────────────────────────────────────────┘
 ```
 
-**Tier 1** runs per-ticker on configurable intervals (default: hourly). Fetches OHLCV + technical indicators via yfinance — no LLM calls. Detects 11 signal types including golden/death cross (with full MA staircase confirmation), RSI extremes, MACD crossovers, Bollinger breaches, volume anomalies, and ATR spikes. When a signal fires, launches a graduated subset of TradingAgents analysts based on signal significance.
+**Tier 1（第一层）**按可配间隔（默认每小时）逐票扫描。通过 yfinance 获取 OHLCV 数据并计算技术指标（technical indicators），不调用任何 LLM。检测 11 种信号类型，包括金叉/死叉（golden/death cross，含完整均线阶梯确认 full MA staircase）、RSI 极值、MACD 交叉、布林带突破（Bollinger breach）、成交量异动（volume anomaly）和 ATR 飙升。信号触发时，根据信号重要程度启动分级（graduated）的 TradingAgents 分析师子集。
 
-**Tier 2** runs once daily at configured UTC times. Launches the full 4-analyst TradingAgents pipeline (Market, Sentiment, News, Fundamentals) with Bull/Bear debate and 3-way risk management for every ticker on the watchlist.
+**Tier 2（第二层）**在配置的 UTC 时间每天运行一次。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals），含多空辩论（Bull/Bear debate）和三维风险管理（3-way risk management）。
 
-**After every analysis**, Watchy fetches your Schwab position for the ticker, calls a lightweight LLM (Gemini by default) to synthesize the report + your holdings into actionable advice, and pushes a natural-language summary to Telegram.
+**每次分析完成后**，Watchy 从 Schwab 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将分析报告与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。
 
-## Quick Start
+## 快速开始（Quick Start）
 
 ```bash
-# 1. Clone into your TradingAgents directory
+# 1. 克隆到 TradingAgents 目录下
 cd ~/TradingAgents
 git clone https://github.com/SConv11/watchy.git
 
-# 2. Install dependencies
+# 2. 安装依赖
 pip install -r watchy/requirements.txt
-pip install apscheduler  # if not already installed
+pip install apscheduler  # 如未安装
 
-# 3. Create config
+# 3. 创建配置文件
 mkdir -p ~/watchy
 cp watchy/config.yaml ~/watchy/config.yaml
-nano ~/watchy/config.yaml  # fill in watchlist, API keys, Telegram creds
+nano ~/watchy/config.yaml  # 填写自选股、API 密钥、Telegram 凭证
 
-# 4. Run
+# 4. 启动
 python -m watchy.daemon
 ```
 
-### systemd (production)
+### systemd 生产部署（Production）
 
 ```bash
 sudo cp watchy/watchy.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now watchy
-journalctl -u watchy -f
+journalctl -u watchy -f  # 查看日志
 ```
 
-## Configuration
+## 配置（Configuration）
 
-See `config.yaml` for the full annotated example. Key sections:
+详见 `config.yaml` 中的完整注释示例。主要配置项：
 
-| Section | Purpose |
-|---------|---------|
-| `watchlist` | Tickers to monitor, per-ticker Tier 1 interval and Tier 2 UTC time |
-| `signal_thresholds` | RSI, volume, and ATR thresholds for signal detection |
-| `cooldown` | Per-signal cooldown windows (prevents spam) |
-| `llm` | Advisor LLM config — Gemini, DeepSeek, OpenAI, or Anthropic |
-| `telegram` | Bot token and chat ID for notifications |
-| `schwab` | Schwab brokerage credentials (optional — enables position-aware advice) |
+| 配置项 | 用途 |
+|--------|------|
+| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔和 Tier 2 UTC 时间 |
+| `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
+| `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
+| `llm` | 顾问 LLM 配置——支持 Gemini、DeepSeek、OpenAI、Anthropic |
+| `telegram` | Telegram 机器人令牌（bot token）和聊天 ID |
+| `schwab` | Schwab 券商凭证（可选——启用后获得持仓感知建议） |
 
-## Signals Detected
+## 信号检测（Signals Detected）
 
-| Signal | Detection | Default Cooldown |
-|--------|-----------|------------------|
-| Golden Cross | 50MA crosses above 200MA + full staircase (price > 50 > 150 > 200) + 200MA trending up | 7 days |
-| Death Cross | 50MA crosses below 200MA | 7 days |
-| RSI Oversold | RSI drops below 30 | 12 hours |
-| RSI Overbought | RSI rises above 70 | 12 hours |
-| MACD Bullish Cross | MACD line crosses above signal line | 24 hours |
-| MACD Bearish Cross | MACD line crosses below signal line | 24 hours |
-| Bollinger Upper Breach | Price ≥ upper band (2σ) | 6 hours |
-| Bollinger Lower Breach | Price ≤ lower band (2σ) | 6 hours |
-| Volume Anomaly (≥2x) | Volume ≥ 2× 20-day average | 4 hours |
-| Volume Anomaly (≥1.5x) | Volume ≥ 1.5× 20-day average (info only) | 4 hours |
-| ATR Spike | ATR ≥ 1.5× 20-day average ATR | 6 hours |
+| 信号 | 检测逻辑 | 默认冷却 |
+|------|----------|----------|
+| 金叉 Golden Cross | 50MA 上穿 200MA + 完整阶梯 (price > 50 > 150 > 200) + 200MA 上行 | 7 天 |
+| 死叉 Death Cross | 50MA 下穿 200MA | 7 天 |
+| RSI 超卖 Oversold | RSI 跌破 30 | 12 小时 |
+| RSI 超买 Overbought | RSI 升破 70 | 12 小时 |
+| MACD 金叉 Bullish Cross | MACD 线上穿信号线（signal line） | 24 小时 |
+| MACD 死叉 Bearish Cross | MACD 线下穿信号线 | 24 小时 |
+| 布林上轨突破 Upper Breach | 价格 ≥ 上轨 (2σ) | 6 小时 |
+| 布林下轨突破 Lower Breach | 价格 ≤ 下轨 (2σ) | 6 小时 |
+| 成交量异动 Volume Anomaly (≥2x) | 成交量 ≥ 20日均量的 2 倍 | 4 小时 |
+| 温和放量 Moderate Volume (≥1.5x) | 成交量 ≥ 20日均量的 1.5 倍（仅通知，不启动分析） | 4 小时 |
+| ATR 飙升 ATR Spike | ATR ≥ 20日均 ATR 的 1.5 倍 | 6 小时 |
 
-## Graduated Analyst Response
+## 分级分析师响应（Graduated Analyst Response）
 
-Not all signals need the full 4-analyst pipeline with debate. Watchy scales analysis depth to signal significance:
+并非所有信号都需要完整的四分析师辩论。Watchy 根据信号重要程度分级调用：
 
-| Trigger | Analysts | Debate | Risk Mgmt |
-|---------|----------|--------|-----------|
-| Tier 2 daily | Market + Sentiment + News + Fundamentals | Bull/Bear | Full 3-way |
-| Golden/Death Cross | Market + Sentiment + News | Bull/Bear | Full 3-way |
-| RSI, MACD, Bollinger, Volume Strong, ATR | Market + Sentiment | Bull/Bear | Simplified |
-| Volume Moderate (≥1.5x) | Market only | None | None |
+| 触发条件 Trigger | 分析师 Analysts | 辩论 Debate | 风险管理 Risk |
+|------------------|----------------|-------------|---------------|
+| Tier 2 每日运行 | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 完整三维 Full 3-way |
+| 金叉/死叉 | 市场 + 情绪 + 新闻 | 多空 | 完整三维 |
+| RSI、MACD、布林、强放量、ATR | 市场 + 情绪 | 多空 | 简化 Simplified |
+| 温和放量 (≥1.5x) | 仅市场 Market only | 无 None | 无 None |
 
-## Telegram Messages
+## Telegram 消息示例
 
-**Signal fired:**
+**信号触发时：**
 ```
 Signal Fired — $NVDA
 Signal: Golden Cross (50MA ↑ 200MA)
@@ -113,7 +114,7 @@ Price: $142.37  RSI: 58.3  SEPA Stage: Advancing
 Analysts launching: market, sentiment, news
 ```
 
-**Analysis complete with position advice (Schwab enabled):**
+**分析完成 + 持仓建议（Schwab 启用后）：**
 ```
 Analysis Complete — $NVDA
 Trigger: Golden Cross (50MA ↑ 200MA)
@@ -132,36 +133,36 @@ Suggested size: 10-15 shares (~2% of portfolio)
 Key risk: If price breaks below the 50MA, the signal is invalidated.
 ```
 
-## File Structure
+## 文件结构（File Structure）
 
 ```
 watchy/
-├── config.yaml              # user-editable configuration
-├── requirements.txt         # Python dependencies
-├── watchy.service           # systemd unit file
-├── project_doc.md           # full technical documentation
-└── watchy/                  # package
-    ├── __init__.py           # package marker
-    ├── config.py             # YAML config → typed dataclasses
-    ├── state.py              # SQLite store (crossover memory, cooldown, history)
-    ├── indicators.py         # technical indicators (yfinance + pandas, no LLM)
-    ├── orchestrator.py       # graduated pipeline selection per signal type
-    ├── advisor.py            # LLM synthesis: analysis + position → advice
-    ├── schwab.py             # Schwab brokerage API client (stub)
-    ├── notify.py             # Telegram Bot notifications
-    ├── tier1.py              # hourly signal scanner
-    ├── tier2.py              # daily full pipeline
-    └── daemon.py             # APScheduler entry point
+├── config.yaml              # 用户可编辑的配置文件
+├── requirements.txt         # Python 依赖
+├── watchy.service           # systemd 单元文件
+├── project_doc.md           # 完整技术文档（英文）
+└── watchy/                  # 包
+    ├── __init__.py           # 包标记
+    ├── config.py             # YAML 配置 → 类型化数据类 (dataclass)
+    ├── state.py              # SQLite 状态存储 (交叉记忆、冷却、历史)
+    ├── indicators.py         # 技术指标计算 (yfinance + pandas, 无 LLM)
+    ├── orchestrator.py       # 按信号类型的分级流水线选择
+    ├── advisor.py            # LLM 合成: 分析报告 + 持仓 → 交易建议
+    ├── schwab.py             # Schwab 券商 API 客户端 (桩代码 stub)
+    ├── notify.py             # Telegram 机器人通知
+    ├── tier1.py              # 每小时信号扫描
+    ├── tier2.py              # 每日完整流水线
+    └── daemon.py             # APScheduler 入口
 ```
 
-## Wiring TradingAgents
+## 对接 TradingAgents（Wiring）
 
-The `pipeline_runner` parameter in `orchestrator.py` is the integration point. Pass a callable `(ticker, PipelineSpec) -> dict` that invokes TradingAgents with the appropriate analyst subset. A stub is provided that logs what would run.
+`orchestrator.py` 中的 `pipeline_runner` 参数是对接点。传入一个可调用对象 `(ticker, PipelineSpec) -> dict`，在其中调用 TradingAgents 的相应分析师子集。当前提供桩实现（stub），仅记录日志不实际调用。
 
-## Documentation
+## 文档（Documentation）
 
-Full technical docs in [`project_doc.md`](project_doc.md) — covers module internals, data flow, deployment, testing strategy, and configuration reference.
+完整技术文档见 [`project_doc.md`](project_doc.md) —— 涵盖模块内部实现、数据流、部署、测试策略和配置参考。
 
-## License
+## 许可证（License）
 
 MIT
