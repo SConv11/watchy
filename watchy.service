@@ -1,0 +1,19 @@
+[Unit]
+Description=Watchy Stock Monitoring Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%u
+WorkingDirectory=%h/TradingAgents
+Environment="WATCHY_CONFIG=%h/watchy/config.yaml"
+Environment="PATH=%h/.pyenv/versions/3.11.9/envs/trading/bin:%h/.pyenv/versions/3.11.9/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=%h/.pyenv/versions/3.11.9/envs/trading/bin/python -m watchy.daemon
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
