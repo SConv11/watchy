@@ -1,0 +1,38 @@
+# Watchy Configuration — non-sensitive settings (safe to commit).
+# Sensitive credentials go in secrets.yaml (git-ignored).
+#
+# Deploy:
+#   cp config.yaml ~/watchy_config/config.yaml
+#   cp secrets.example.yaml ~/watchy_config/secrets.yaml
+#   # then edit secrets.yaml with your real keys
+
+watchlist:
+  - "NVDA"
+  - "TSLA"
+  - "AAPL"
+  # Short form uses defaults: scan every 1h, daily at 22:00 UTC.
+  # For per-ticker overrides, use the long form:
+  # - ticker: "NVDA"
+  #   tier1_interval_h: 2
+  #   tier2_time_utc: "14:30"
+
+# Thresholds & cooldowns below are OPTIONAL — defaults are set in code.
+# Uncomment any section to override.
+
+# signal_thresholds:
+#   rsi_oversold: 30
+#   rsi_overbought: 70
+#   volume_ratio_moderate: 1.5
+#   volume_ratio_strong: 2.0
+#   atr_ratio: 1.5
+
+# cooldown:
+#   rsi_extreme_h: 12
+#   macd_cross_h: 24
+#   bollinger_breach_h: 6
+#   volume_anomaly_h: 4
+#   atr_spike_h: 6
+#   golden_cross_d: 7
+
+log_level: "DEBUG"
+log_file: "~/watchy/watchy.log"

@@ -49,12 +49,18 @@ git clone https://github.com/SConv11/watchy.git
 ~/.pyenv/versions/3.11.9/envs/trading/bin/pip install -e ~/watchy
 # -e 表示可编辑安装（editable install），后续 git pull 自动生效
 
-# 3. 创建配置文件（⚠️ 不要提交真实 API key 到 GitHub）
+# 3. 创建配置文件
 mkdir -p ~/watchy_config
-cp ~/watchy/config.example.yaml ~/watchy_config/config.yaml
-nano ~/watchy_config/config.yaml  # 填写自选股、API 密钥、Telegram 凭证
+cp ~/watchy/config.yaml ~/watchy_config/config.yaml
+cp ~/watchy/secrets.example.yaml ~/watchy_config/secrets.yaml
 
-# 4. 启动（测试用）
+# 4. 填入敏感信息（API key、Telegram token）
+nano ~/watchy_config/secrets.yaml
+
+# 5. 编辑自选股（可通过 GitHub 远程编辑，git pull 同步）
+nano ~/watchy_config/config.yaml
+
+# 6. 启动（测试用）
 WATCHY_CONFIG=~/watchy_config/config.yaml python -m watchy.daemon
 ```
 
@@ -69,7 +75,12 @@ journalctl -u watchy -f  # 查看日志
 
 ## 配置（Configuration）
 
-详见 `config.example.yaml` 中的完整注释示例。主要配置项：
+配置分两个文件：
+
+- **`config.yaml`**（可安全提交）—— 自选股、阈值、冷却时间
+- **`secrets.yaml`**（git-ignored）—— LLM API key、Telegram token、Schwab 凭证
+
+详见 `config.yaml` 和 `secrets.example.yaml` 中的完整注释。主要配置项：
 
 | 配置项 | 用途 |
 |--------|------|
@@ -140,7 +151,8 @@ Key risk: If price breaks below the 50MA, the signal is invalidated.
 
 ```
 watchy/
-├── config.example.yaml      # 配置模板（安全提交，无真实密钥）
+├── config.yaml              # 非敏感配置（可安全提交，通过 GitHub 编辑）
+├── secrets.example.yaml     # 敏感配置模板（本地拷贝后填入真实 key）
 ├── requirements.txt         # Python 依赖
 ├── watchy.service           # systemd 单元文件
 ├── project_doc.md           # 完整技术文档（英文）

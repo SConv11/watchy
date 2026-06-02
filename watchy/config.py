@@ -95,9 +95,32 @@ class WatchyConfig:
         )
 
 
+def _merge_secrets(config: WatchyConfig, secrets_path: str) -> WatchyConfig:
+    """Merge secrets.yaml into config — secrets override corresponding sections."""
+    if not os.path.exists(secrets_path):
+        return config
+
+    with open(secrets_path) as f:
+        secrets: dict[str, Any] = yaml.safe_load(f) or {}
+
+    if "llm" in secrets:
+        config.llm = LLMConfig(**secrets["llm"])
+    if "telegram" in secrets:
+        config.telegram = TelegramConfig(**secrets["telegram"])
+    if "schwab" in secrets:
+        config.schwab = SchwabConfig(**secrets["schwab"])
+
+    return config
+
+
 def load_config(path: str | None = None) -> WatchyConfig:
     if path is None:
         path = os.environ.get(
             "WATCHY_CONFIG", os.path.expanduser("~/watchy_config/config.yaml")
         )
-    return WatchyConfig.from_yaml(path)
+    path = os.path.expanduser(path)
+    config = WatchyConfig.from_yaml(path)
+
+    # Auto-discover secrets.yaml in the same directory
+    secrets_path = os.path.join(os.path.dirname(path), "secrets.yaml")
+    return _merge_secrets(config, secrets_path)
