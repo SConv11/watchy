@@ -5,11 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=%u
-WorkingDirectory=%h/watchy
-Environment="WATCHY_CONFIG=%h/watchy_config/config.yaml"
-Environment="PATH=%h/.pyenv/versions/3.11.9/envs/trading/bin:%h/.pyenv/versions/3.11.9/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=%h/.pyenv/versions/3.11.9/envs/trading/bin/python -m watchy.daemon
+User=watchy
+WorkingDirectory=/home/watchy/watchy
+Environment="WATCHY_CONFIG=/home/watchy/watchy_config/config.yaml"
+Environment="PATH=/home/watchy/.pyenv/versions/3.11.9/envs/trading/bin:/home/watchy/.pyenv/versions/3.11.9/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/watchy/.pyenv/versions/3.11.9/envs/trading/bin/python -m watchy.daemon
 Restart=always
 RestartSec=30
 StandardOutput=journal
