@@ -13,8 +13,8 @@ import yaml
 @dataclass
 class TickerConfig:
     ticker: str
-    tier1_interval_h: int = 1
-    tier2_time_utc: str = "13:00"
+    tier1_interval_h: float = 0.5
+    tier2_time_utc: str = "11:30"
 
 
 @dataclass

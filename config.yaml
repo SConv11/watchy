@@ -22,7 +22,8 @@ watchlist:
   - "AVGO"
   - "APH"
   - "HUBB"
-  # Short form uses defaults: scan every 1h, daily at 13:00 UTC.
+  - "SOXX"
+  # Short form uses defaults: scan every 30min, daily at 11:30 UTC.
   # For per-ticker overrides, use the long form:
   # - ticker: "NVDA"
   #   tier1_interval_h: 2

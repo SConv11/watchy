@@ -22,9 +22,9 @@ from watchy.state import StateStore
 logger = logging.getLogger(__name__)
 
 FULL_PIPELINE = PipelineSpec(
-    analysts=AnalystSet.FULL,
+    analysts=AnalystSet.MARKET_SENTIMENT_NEWS,
     debate=DebateMode.BULL_BEAR,
-    risk=RiskMode.FULL,
+    risk=RiskMode.SIMPLIFIED,
 )
 
 
