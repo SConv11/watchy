@@ -1,0 +1,11 @@
+[Unit]
+Description=Watchy Auto-Update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=watchy
+ExecStart=/bin/bash /home/watchy/watchy/auto-update.sh
+StandardOutput=journal
+StandardError=journal

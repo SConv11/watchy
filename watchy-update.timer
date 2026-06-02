@@ -1,0 +1,10 @@
+[Unit]
+Description=Watchy Auto-Update Timer
+Requires=watchy-update.service
+
+[Timer]
+OnUnitActiveSec=5min
+OnBootSec=60s
+
+[Install]
+WantedBy=timers.target
