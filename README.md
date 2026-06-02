@@ -41,27 +41,27 @@
 ## 快速开始（Quick Start）
 
 ```bash
-# 1. 克隆到 TradingAgents 目录下
-cd ~/TradingAgents
+# 1. 克隆仓库
+cd ~
 git clone https://github.com/SConv11/watchy.git
 
 # 2. 安装依赖
-pip install -r watchy/requirements.txt
-pip install apscheduler  # 如未安装
+~/.pyenv/versions/3.11.9/envs/trading/bin/pip install -e ~/watchy
+# -e 表示可编辑安装（editable install），后续 git pull 自动生效
 
-# 3. 创建配置文件
-mkdir -p ~/watchy
-cp watchy/config.yaml ~/watchy/config.yaml
-nano ~/watchy/config.yaml  # 填写自选股、API 密钥、Telegram 凭证
+# 3. 创建配置文件（⚠️ 不要提交真实 API key 到 GitHub）
+mkdir -p ~/watchy_config
+cp ~/watchy/config.example.yaml ~/watchy_config/config.yaml
+nano ~/watchy_config/config.yaml  # 填写自选股、API 密钥、Telegram 凭证
 
-# 4. 启动
-python -m watchy.daemon
+# 4. 启动（测试用）
+WATCHY_CONFIG=~/watchy_config/config.yaml python -m watchy.daemon
 ```
 
 ### systemd 生产部署（Production）
 
 ```bash
-sudo cp watchy/watchy.service /etc/systemd/system/
+sudo cp ~/watchy/watchy.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now watchy
 journalctl -u watchy -f  # 查看日志
@@ -69,7 +69,7 @@ journalctl -u watchy -f  # 查看日志
 
 ## 配置（Configuration）
 
-详见 `config.yaml` 中的完整注释示例。主要配置项：
+详见 `config.example.yaml` 中的完整注释示例。主要配置项：
 
 | 配置项 | 用途 |
 |--------|------|
@@ -140,7 +140,7 @@ Key risk: If price breaks below the 50MA, the signal is invalidated.
 
 ```
 watchy/
-├── config.yaml              # 用户可编辑的配置文件
+├── config.example.yaml      # 配置模板（安全提交，无真实密钥）
 ├── requirements.txt         # Python 依赖
 ├── watchy.service           # systemd 单元文件
 ├── project_doc.md           # 完整技术文档（英文）

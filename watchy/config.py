@@ -98,6 +98,6 @@ class WatchyConfig:
 def load_config(path: str | None = None) -> WatchyConfig:
     if path is None:
         path = os.environ.get(
-            "WATCHY_CONFIG", os.path.expanduser("~/watchy/config.yaml")
+            "WATCHY_CONFIG", os.path.expanduser("~/watchy_config/config.yaml")
         )
     return WatchyConfig.from_yaml(path)

@@ -1,5 +1,6 @@
-# Watchy Configuration
-# Copy to ~/watchy/config.yaml and fill in your values.
+# Watchy Configuration (example template)
+# Copy to ~/watchy_config/config.yaml and fill in your secret values.
+# This file is safe to commit — it contains no real secrets.
 
 watchlist:
   - ticker: "NVDA"
