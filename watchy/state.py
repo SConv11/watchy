@@ -83,12 +83,12 @@ class StateStore:
     def save_ticker_state(self, ticker: str, **kwargs: Any) -> None:
         kwargs.setdefault("updated_ts", _now_iso())
         columns = ", ".join(f"{k} = ?" for k in kwargs)
-        values = list(kwargs.values()) + [ticker.upper()]
+        vals = list(kwargs.values())
         self._conn.execute(
             f"INSERT INTO ticker_state (ticker, {', '.join(kwargs)}) "
             f"VALUES (?, {', '.join('?' for _ in kwargs)}) "
             f"ON CONFLICT(ticker) DO UPDATE SET {columns}",
-            [ticker.upper()] + values,
+            [ticker.upper()] + vals + vals,
         )
         self._conn.commit()
 

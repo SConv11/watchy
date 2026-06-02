@@ -18,25 +18,39 @@ from watchy.schwab import SchwabClient
 
 logger = logging.getLogger(__name__)
 
-ADVISOR_PROMPT = """You are a portfolio advisor. Given an analysis report from a team of
-financial analysts and the user's current position, provide a clear, specific
-recommendation on whether the user should alter their position.
+ADVISOR_PROMPT = """You are a portfolio advisor. Below is a full analysis report from a
+team of financial analysts (market, sentiment, fundamentals, and risk), plus
+the user's current position and portfolio overview.
 
-Respond with a JSON object with these fields:
-  - action: one of "buy", "sell", "trim", "add", "hold"
-  - reasoning: 2-4 sentences explaining why, referencing specific points from the analysis
-  - urgency: "high", "medium", or "low"
-  - suggested_size: optional, a suggestion like "2% of portfolio" or "10 shares"
-  - risk_note: one sentence about the primary risk to this recommendation
+Consider the user's overall portfolio composition when making your decision.
+Avoid over-concentration in any single sector or ticker. If the portfolio is
+already heavy in this name or sector, lean toward trimming or holding rather
+than adding.
 
---- ANALYSIS REPORT ---
+Respond in this exact format:
+
+Ticker: {ticker}
+Decision: <BUY / SELL / TRIM / ADD / HOLD>
+Urgency: <HIGH / MEDIUM / LOW>
+
+Then write a detailed paragraph (5-8 sentences) covering:
+  - Specific entry/exit price target or range, referencing levels from the analysis
+  - Suggested position size with rationale (e.g. "3% of portfolio / $5,000")
+  - The 2-3 key reasons from the analysis that support this decision
+  - The primary risk(s) that could invalidate this recommendation
+  - Any conditions the user should watch for (e.g. "if it breaks below X, exit")
+
+Be specific and data-driven — cite actual prices, indicator values, and analyst
+findings from the report. Do NOT use JSON, markdown tables, or bullet points.
+
+--- FULL ANALYSIS REPORT ---
 Ticker: {ticker}
 {analysis}
 
---- CURRENT POSITION ---
+--- YOUR CURRENT POSITION ---
 {position}
 
---- PORTFOLIO CONTEXT ---
+--- YOUR PORTFOLIO OVERVIEW ---
 {portfolio}
 """
 
@@ -46,11 +60,11 @@ def get_advice(
     analysis_result: dict[str, Any],
     schwab: SchwabClient,
     config: WatchyConfig,
-) -> dict[str, Any] | None:
-    """Synthesize position-aware advice from analysis + portfolio state.
+) -> dict[str, str] | None:
+    """Synthesize position-aware advice from analysis + portfolio.
 
-    Returns a dict with keys: action, reasoning, urgency, suggested_size,
-    risk_note. Returns None if LLM is not configured or the call fails.
+    Returns a dict with keys: ticker, decision, urgency, detail.
+    Returns None if no LLM key is configured or the call fails.
     """
     llm = config.llm
     if not llm.api_key:
@@ -80,41 +94,111 @@ def get_advice(
             logger.warning("Unknown LLM provider: %s", llm.provider)
             return None
 
-        advice = json.loads(result)
-        logger.info("Advisor for %s: action=%s urgency=%s", ticker, advice.get("action"), advice.get("urgency"))
-        return advice
+        parsed = _parse_advice(result.strip(), ticker)
+        logger.info(
+            "Advisor for %s: decision=%s urgency=%s",
+            ticker, parsed.get("decision"), parsed.get("urgency"),
+        )
+        return parsed
     except Exception:
         logger.exception("Advisor synthesis failed for %s", ticker)
         return None
 
 
+def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
+    """Parse the structured advice output into a dict.
+
+    Expected format::
+
+        Ticker: NVDA
+        Decision: BUY
+        Urgency: HIGH
+
+        <detail paragraph...>
+    """
+    lines = raw.split("\n")
+    parsed: dict[str, str] = {
+        "ticker": fallback_ticker,
+        "decision": "",
+        "urgency": "",
+        "detail": "",
+    }
+
+    detail_start = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.lower().startswith("ticker:"):
+            val = stripped.split(":", 1)[1].strip()
+            if val:
+                parsed["ticker"] = val
+        elif stripped.lower().startswith("decision:"):
+            parsed["decision"] = stripped.split(":", 1)[1].strip().upper()
+        elif stripped.lower().startswith("urgency:"):
+            parsed["urgency"] = stripped.split(":", 1)[1].strip().upper()
+        else:
+            detail_start = i
+            break
+
+    # Everything after the header lines is the detail paragraph.
+    detail_lines = [l.strip() for l in lines[detail_start:] if l.strip()]
+    parsed["detail"] = " ".join(detail_lines)
+
+    return parsed
+
+
 def _format_analysis(result: dict[str, Any]) -> str:
-    parts = []
+    """Build a rich analysis summary for the advisor LLM.
 
-    recs = result.get("recommendations", [])
-    if recs:
-        parts.append("Recommendations: " + "; ".join(recs))
+    Uses the full untruncated analyst reports when available (from
+    ``_reports``), falling back to the truncated summary fields.
+    """
+    parts: list[str] = []
 
+    # Full analyst reports (preferred — no truncation)
+    reports = result.get("_reports", {})
+    for key, label in [
+        ("market_report", "Market Analyst"),
+        ("sentiment_report", "Sentiment Analyst"),
+        ("news_report", "News Analyst"),
+        ("fundamentals_report", "Fundamentals Analyst"),
+    ]:
+        text = reports.get(key) or ""
+        if text:
+            parts.append(f"--- {label} ---\n{text}")
+
+    # If no full reports, fall back to recommendations field
+    if not parts:
+        recs = result.get("recommendations", [])
+        if recs:
+            parts.append("Recommendations:\n" + "\n".join(recs))
+
+    # Risk assessment
     risk = result.get("risk_assessment")
     if risk:
-        parts.append(f"Risk assessment: {risk}")
+        parts.append(f"--- Risk Assessment ---\n{risk}")
 
-    summary = result.get("summary", "")
-    if summary:
-        parts.append(f"Summary: {summary}")
+    # Trader plan + final decision (untruncated from _decision_raw)
+    decision = result.get("_decision_raw") or ""
+    if decision:
+        parts.append(f"--- Final Decision ---\n{decision}")
 
-    analysts = result.get("analysts_run", [])
-    if analysts:
-        parts.append(f"Analysts consulted: {', '.join(analysts)}")
-
+    # SEPA stage context
     stage = result.get("stage_context", {})
     if stage:
         sepa = stage.get("sepa_stage")
         if sepa:
             names = {1: "Basing", 2: "Advancing", 3: "Topping", 4: "Declining"}
-            parts.append(f"SEPA stage: {names.get(sepa, '?')} (stage {sepa})")
+            parts.append(f"SEPA Stage: {names.get(sepa, '?')} (stage {sepa})")
 
-    return "\n".join(parts) if parts else json.dumps(result)
+    if not parts:
+        return json.dumps(result)
+
+    return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# LLM API call helpers
+# ---------------------------------------------------------------------------
 
 
 def _call_anthropic(prompt: str, llm: LLMConfig) -> str:
@@ -127,7 +211,7 @@ def _call_anthropic(prompt: str, llm: LLMConfig) -> str:
 
     body = json.dumps({
         "model": llm.model,
-        "max_tokens": 400,
+        "max_tokens": 600,
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
 
@@ -146,11 +230,7 @@ def _call_anthropic(prompt: str, llm: LLMConfig) -> str:
 
 
 def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
-    """Call OpenAI-compatible Chat API (OpenAI, DeepSeek, and other compatible providers).
-
-    DeepSeek: set provider=deepseek, model=deepseek-chat (or deepseek-reasoner).
-    The api_base defaults to https://api.deepseek.com/v1 for provider=deepseek.
-    """
+    """Call OpenAI-compatible Chat API (OpenAI, DeepSeek, etc.)."""
     import urllib.request
 
     default_bases = {
@@ -162,7 +242,7 @@ def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
 
     body = json.dumps({
         "model": llm.model,
-        "max_tokens": 400,
+        "max_tokens": 600,
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
 
@@ -182,7 +262,6 @@ def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
 def _call_gemini(prompt: str, llm: LLMConfig) -> str:
     """Call Google Gemini API for advice synthesis.
 
-    Set provider=gemini, model=gemini-2.5-flash (or gemini-2.5-pro).
     Uses the Gemini REST API (not Vertex AI).
     API key from: https://aistudio.google.com/apikey
     """
@@ -193,7 +272,7 @@ def _call_gemini(prompt: str, llm: LLMConfig) -> str:
 
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 400},
+        "generationConfig": {"maxOutputTokens": 600},
     }).encode()
 
     req = urllib.request.Request(
@@ -203,5 +282,4 @@ def _call_gemini(prompt: str, llm: LLMConfig) -> str:
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-        # Gemini response: {"candidates": [{"content": {"parts": [{"text": "..."}]}}]}
         return data["candidates"][0]["content"]["parts"][0]["text"]

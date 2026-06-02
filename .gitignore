@@ -8,3 +8,4 @@ dist/
 secrets.yaml
 .venv/
 venv/
+reports/

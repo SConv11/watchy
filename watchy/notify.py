@@ -1,12 +1,16 @@
 """Telegram Bot notifications for Watchy.
 
 Pushes natural-language summaries on: signal fired, pipeline result, errors.
+Also sends the full markdown analysis report as a document attachment.
 """
 
 from __future__ import annotations
 
 import logging
+import mimetypes
+import os
 from typing import Any
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,28 @@ class TelegramNotifier:
             logger.info("[telegram would send]: %s", message)
             return False
         return self._post("sendMessage", {"text": message, "parse_mode": "HTML"})
+
+    def send_document(
+        self,
+        file_path: str,
+        *,
+        caption: str | None = None,
+    ) -> bool:
+        """Send a document file via Telegram.
+
+        Args:
+            file_path: Path to the file to send.
+            caption: Optional caption text.
+
+        Returns:
+            True on success.
+        """
+        if not self._enabled:
+            logger.info(
+                "[telegram would send_document]: %s (caption=%s)", file_path, caption
+            )
+            return False
+        return self._post_file("sendDocument", file_path, caption=caption)
 
     def signal_fired(
         self,
@@ -58,12 +84,15 @@ class TelegramNotifier:
         result: dict[str, Any],
         *,
         position_text: str | None = None,
-        advice: dict[str, Any] | None = None,
+        advice: dict[str, str] | None = None,
     ) -> bool:
-        """Notify with a natural-language pipeline summary.
+        """Notify with a natural-language pipeline summary + full report file.
 
         If position_text and advice are provided, includes position context and
         a specific recommendation on whether to alter the position.
+
+        When a ``report_path`` is present in *result*, the full markdown report
+        is sent as a document attachment.
         """
         recs = result.get("recommendations", [])
         rec_text = ", ".join(recs) if recs else "no actionable recommendation"
@@ -77,7 +106,9 @@ class TelegramNotifier:
             f"<b>Risk:</b> {risk}",
         ]
         if summary:
-            lines.append(f"<b>Summary:</b> {summary}")
+            # Keep the Telegram message compact — full details are in the file.
+            short = summary[:200] + "..." if len(summary) > 200 else summary
+            lines.append(f"<b>Summary:</b> {short}")
 
         # position context
         if position_text:
@@ -86,23 +117,28 @@ class TelegramNotifier:
 
         # advisor synthesis
         if advice:
-            action = advice.get("action", "?").upper()
-            reasoning = advice.get("reasoning", "")
+            decision = advice.get("decision", "?")
             urgency = advice.get("urgency", "")
-            suggested = advice.get("suggested_size", "")
-            risk_note = advice.get("risk_note", "")
+            detail = advice.get("detail", "")
 
-            urgency_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(urgency, "")
+            urgency_icon = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(urgency, "")
             lines.append("")
-            lines.append(f"<b>Position Advice:</b> {urgency_icon} <b>{action}</b> ({urgency} urgency)")
-            if reasoning:
-                lines.append(f"<i>{reasoning}</i>")
-            if suggested:
-                lines.append(f"<b>Suggested size:</b> {suggested}")
-            if risk_note:
-                lines.append(f"<b>Key risk:</b> {risk_note}")
+            lines.append(
+                f"<b>Position Advice:</b> {urgency_icon} <b>{decision}</b>"
+                + (f" ({urgency} urgency)" if urgency else "")
+            )
+            if detail:
+                lines.append(detail)
 
-        return self.send("\n".join(lines))
+        ok = self.send("\n".join(lines))
+
+        # Send the full markdown report as a document
+        report_path = result.get("report_path")
+        if report_path and os.path.isfile(report_path):
+            caption = f"📄 Full analysis report: ${ticker} — {_signal_label(signal_type)}"
+            self.send_document(report_path, caption=caption)
+
+        return ok
 
     def error(self, context: str, error: Exception) -> bool:
         """Notify on critical errors."""
@@ -131,6 +167,78 @@ class TelegramNotifier:
                 return True
         except Exception:
             logger.exception("Failed to send Telegram message")
+            return False
+
+    def _post_file(
+        self,
+        method: str,
+        file_path: str,
+        *,
+        caption: str | None = None,
+    ) -> bool:
+        """Send a multipart/form-data request with a file attachment."""
+        import urllib.request
+        import json
+
+        url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
+        boundary = uuid4().hex
+        filename = os.path.basename(file_path)
+
+        # Guess MIME type
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+
+        with open(file_path, "rb") as fh:
+            file_bytes = fh.read()
+
+        CRLF = b"\r\n"
+
+        def _part(name: str, value: bytes, *, extra_headers: str = "") -> bytes:
+            hdr = f'Content-Disposition: form-data; name="{name}"'
+            if extra_headers:
+                hdr += f"; {extra_headers}"
+            return CRLF.join([
+                f"--{boundary}".encode(),
+                hdr.encode(),
+                b"",
+                value,
+            ])
+
+        parts: list[bytes] = []
+
+        # chat_id
+        parts.append(_part("chat_id", self.chat_id.encode()))
+
+        # document
+        file_part_headers = f'filename="{filename}"\r\nContent-Type: {mime_type}'
+        parts.append(_part("document", file_bytes, extra_headers=file_part_headers))
+
+        # optional caption
+        if caption:
+            parts.append(_part("caption", caption.encode("utf-8")))
+
+        # closing
+        parts.append(f"--{boundary}--".encode())
+
+        body = CRLF.join(parts)
+
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                resp_body = json.loads(resp.read())
+                if not resp_body.get("ok"):
+                    logger.error("Telegram API error (sendDocument): %s", resp_body)
+                    return False
+                return True
+        except Exception:
+            logger.exception("Failed to send Telegram document")
             return False
 
 

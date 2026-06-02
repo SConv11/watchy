@@ -13,6 +13,7 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -22,6 +23,7 @@ from watchy import __version__
 from watchy.config import WatchyConfig, load_config
 from watchy.notify import TelegramNotifier
 from watchy.state import StateStore
+from watchy.pipeline_runner import create_tradingagents_runner
 from watchy.tier1 import scan_ticker
 from watchy.tier2 import run_daily_scan
 
@@ -53,6 +55,8 @@ def build_scheduler(
     config: WatchyConfig,
     store: StateStore,
     notifier: TelegramNotifier,
+    *,
+    pipeline_runner: Any = None,
 ) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone="UTC")
 
@@ -61,7 +65,7 @@ def build_scheduler(
         scheduler.add_job(
             _tier1_job,
             trigger=IntervalTrigger(hours=tc.tier1_interval_h),
-            args=[tc.ticker, config, store, notifier],
+            args=[tc.ticker, config, store, notifier, pipeline_runner],
             id=f"tier1_{tc.ticker}",
             name=f"Tier 1 — {tc.ticker}",
             replace_existing=True,
@@ -77,7 +81,7 @@ def build_scheduler(
         scheduler.add_job(
             _tier2_job,
             trigger=CronTrigger(hour=int(hour), minute=int(minute)),
-            args=[config, store, notifier],
+            args=[config, store, notifier, pipeline_runner],
             id=f"tier2_{tc.tier2_time_utc.replace(':', '')}",
             name=f"Tier 2 — {tc.tier2_time_utc} UTC",
             replace_existing=True,
@@ -91,10 +95,13 @@ def _tier1_job(
     config: WatchyConfig,
     store: StateStore,
     notifier: TelegramNotifier,
+    pipeline_runner: Any = None,
 ) -> None:
     logger = logging.getLogger("watchy.daemon")
     try:
-        fired = scan_ticker(ticker, config, store, notifier)
+        fired = scan_ticker(
+            ticker, config, store, notifier, pipeline_runner=pipeline_runner,
+        )
         if fired:
             logger.info("Tier 1 %s: fired %s", ticker, fired)
     except Exception:
@@ -106,10 +113,11 @@ def _tier2_job(
     config: WatchyConfig,
     store: StateStore,
     notifier: TelegramNotifier,
+    pipeline_runner: Any = None,
 ) -> None:
     logger = logging.getLogger("watchy.daemon")
     try:
-        run_daily_scan(config, store, notifier)
+        run_daily_scan(config, store, notifier, pipeline_runner=pipeline_runner)
     except Exception:
         logger.exception("Tier 2 job failed")
         notifier.error("Tier 2 job", sys.exc_info()[1])
@@ -126,7 +134,13 @@ def main(config_path: str | None = None) -> None:
     store = StateStore()
     notifier = TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id)
 
-    scheduler = build_scheduler(config, store, notifier)
+    # Wire the real TradingAgents pipeline runner (DeepSeek by default).
+    # Falls back to stub if DEEPSEEK_API_KEY is not set in the environment.
+    pipeline_runner = create_tradingagents_runner()
+
+    scheduler = build_scheduler(
+        config, store, notifier, pipeline_runner=pipeline_runner,
+    )
 
     def _shutdown(signum, frame):
         logger.info("Shutting down (signal=%d)", signum)
