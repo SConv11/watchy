@@ -212,21 +212,43 @@ def detect_signals(
 
 def _fetch_history(ticker: str) -> pd.DataFrame | None:
     """Fetch OHLCV data from yfinance with rate-limit awareness."""
-    try:
-        import yfinance as yf
-    except ImportError:
-        logger.error("yfinance not installed")
-        return None
+    import time
 
     try:
-        t = yf.Ticker(ticker)
-        df = t.history(period="1y", interval="1d")
-        if df.empty:
-            # retry with multi-ticker download
-            df = yf.download(ticker, period="1y", interval="1d", progress=False)
-        return df if not df.empty else None
-    except Exception:
-        raise
+        import yfinance as yf
+        import requests
+    except ImportError:
+        logger.error("yfinance / requests not installed")
+        return None
+
+    session = requests.Session()
+    session.headers["User-Agent"] = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    )
+
+    for attempt in range(3):
+        try:
+            t = yf.Ticker(ticker, session=session)
+            df = t.history(period="1y", interval="1d")
+            if df.empty:
+                df = yf.download(ticker, period="1y", interval="1d", progress=False)
+            if not df.empty:
+                return df
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "429" in msg or "rate" in msg or "too many" in msg:
+                wait = (attempt + 1) * 5
+                logger.warning(
+                    "yfinance rate-limited for %s (attempt %d/3), waiting %ds…",
+                    ticker, attempt + 1, wait,
+                )
+                time.sleep(wait)
+            else:
+                raise
+
+    logger.error("yfinance failed for %s after 3 retries", ticker)
+    return None
 
 
 def _compute_rsi(close: pd.Series, period: int = 14) -> float | None:
