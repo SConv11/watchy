@@ -7,16 +7,28 @@
 #   # then edit secrets.yaml with your real keys
 
 watchlist:
-  - "NVDA"
-  - "TSLA"
+  - "AMZN"
+  - "CARR"
+  - "EMR"
+  - "GOOG"
+  - "NVT"
+  - "VST"
   - "AAPL"
-  # Short form uses defaults: scan every 1h, daily at 22:00 UTC.
+  - "TSLA"
+  - "MOD"
+  - "VRT"
+  - "SMCI"
+  - "CEG"
+  - "AVGO"
+  - "APH"
+  - "HUBB"
+  # Short form uses defaults: scan every 1h, daily at 13:00 UTC.
   # For per-ticker overrides, use the long form:
   # - ticker: "NVDA"
   #   tier1_interval_h: 2
   #   tier2_time_utc: "14:30"
 
-# Thresholds & cooldowns below are OPTIONAL — defaults are set in code.
+# Thresholds & cooldowns below are OPTIONAL — defaults are in code.
 # Uncomment any section to override.
 
 # signal_thresholds:

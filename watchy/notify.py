@@ -30,6 +30,10 @@ class TelegramNotifier:
             return False
         return self._post("sendMessage", {"text": message, "parse_mode": "HTML"})
 
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters so Telegram parse_mode=HTML doesn't choke."""
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
     def send_document(
         self,
         file_path: str,
@@ -94,9 +98,10 @@ class TelegramNotifier:
         When a ``report_path`` is present in *result*, the full markdown report
         is sent as a document attachment.
         """
+        esc = self._escape_html
         recs = result.get("recommendations", [])
-        rec_text = ", ".join(recs) if recs else "no actionable recommendation"
-        risk = result.get("risk_assessment") or "not assessed"
+        rec_text = esc(", ".join(recs) if recs else "no actionable recommendation")
+        risk = esc(result.get("risk_assessment") or "not assessed")
         summary = result.get("summary", "")
 
         lines = [
@@ -106,20 +111,19 @@ class TelegramNotifier:
             f"<b>Risk:</b> {risk}",
         ]
         if summary:
-            # Keep the Telegram message compact — full details are in the file.
-            short = summary[:200] + "..." if len(summary) > 200 else summary
+            short = esc(summary[:200] + "..." if len(summary) > 200 else summary)
             lines.append(f"<b>Summary:</b> {short}")
 
         # position context
         if position_text:
             lines.append("")
-            lines.append(f"<b>Your Position:</b>\n{position_text}")
+            lines.append(f"<b>Your Position:</b>\n{esc(position_text)}")
 
         # advisor synthesis
         if advice:
-            decision = advice.get("decision", "?")
+            decision = esc(advice.get("decision", "?"))
             urgency = advice.get("urgency", "")
-            detail = advice.get("detail", "")
+            detail = esc(advice.get("detail", ""))
 
             urgency_icon = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(urgency, "")
             lines.append("")
