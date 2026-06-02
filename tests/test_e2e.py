@@ -66,7 +66,9 @@ def main() -> None:
 
     # ---- 3. Create the real pipeline runner (DeepSeek) ----
     logger.info("Creating TradingAgents pipeline runner (DeepSeek)...")
-    runner = create_tradingagents_runner()
+    runner = create_tradingagents_runner(
+        deepseek_api_key=config.llm.deepseek_api_key,
+    )
 
     # ---- 4. Resolve PipelineSpec ----
     spec = get_pipeline(signal_type)
