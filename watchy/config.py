@@ -42,6 +42,7 @@ class LLMConfig:
     model: str = "claude-sonnet-4-6"
     api_key: str = ""
     api_base: str | None = None
+    deepseek_api_key: str = ""
 
 
 @dataclass

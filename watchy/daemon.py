@@ -135,8 +135,10 @@ def main(config_path: str | None = None) -> None:
     notifier = TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id)
 
     # Wire the real TradingAgents pipeline runner (DeepSeek by default).
-    # Falls back to stub if DEEPSEEK_API_KEY is not set in the environment.
-    pipeline_runner = create_tradingagents_runner()
+    # API key from secrets.yaml, injected as env var before TA imports.
+    pipeline_runner = create_tradingagents_runner(
+        deepseek_api_key=config.llm.deepseek_api_key,
+    )
 
     scheduler = build_scheduler(
         config, store, notifier, pipeline_runner=pipeline_runner,

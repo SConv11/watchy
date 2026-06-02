@@ -43,6 +43,12 @@ def create_tradingagents_runner(
         A callable suitable for ``PipelineRunner``.
     """
 
+    # Ensure DEEPSEEK_API_KEY is set before TradingAgents imports its clients.
+    # The key lives in secrets.yaml alongside the Gemini key — one secrets file,
+    # no systemd Environment= needed.
+    if "DEEPSEEK_API_KEY" not in os.environ and extra_config.get("deepseek_api_key"):
+        os.environ["DEEPSEEK_API_KEY"] = extra_config.pop("deepseek_api_key")
+
     # Defer import so the module is importable even without TradingAgents
     # installed (e.g. during linting or unit tests on a different machine).
     from tradingagents.default_config import DEFAULT_CONFIG
