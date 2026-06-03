@@ -216,20 +216,13 @@ def _fetch_history(ticker: str) -> pd.DataFrame | None:
 
     try:
         import yfinance as yf
-        import requests
     except ImportError:
-        logger.error("yfinance / requests not installed")
+        logger.error("yfinance not installed")
         return None
-
-    session = requests.Session()
-    session.headers["User-Agent"] = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    )
 
     for attempt in range(3):
         try:
-            t = yf.Ticker(ticker, session=session)
+            t = yf.Ticker(ticker)
             df = t.history(period="1y", interval="1d")
             if df.empty:
                 df = yf.download(ticker, period="1y", interval="1d", progress=False)

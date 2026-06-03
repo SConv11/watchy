@@ -7,7 +7,6 @@ Wants=network-online.target
 Type=simple
 User=watchy
 WorkingDirectory=/home/watchy/watchy
-Environment="WATCHY_CONFIG=/home/watchy/watchy_config/config.yaml"
 Environment="PATH=/home/watchy/.pyenv/versions/3.11.9/envs/trading/bin:/home/watchy/.pyenv/versions/3.11.9/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=/home/watchy/.pyenv/versions/3.11.9/envs/trading/bin/python -m watchy.daemon
 Restart=always

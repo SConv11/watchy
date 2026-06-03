@@ -117,11 +117,11 @@ def _merge_secrets(config: WatchyConfig, secrets_path: str) -> WatchyConfig:
 def load_config(path: str | None = None) -> WatchyConfig:
     if path is None:
         path = os.environ.get(
-            "WATCHY_CONFIG", os.path.expanduser("~/watchy_config/config.yaml")
+            "WATCHY_CONFIG", os.path.expanduser("~/watchy/config.yaml")
         )
     path = os.path.expanduser(path)
     config = WatchyConfig.from_yaml(path)
 
-    # Auto-discover secrets.yaml in the same directory
-    secrets_path = os.path.join(os.path.dirname(path), "secrets.yaml")
+    # Secrets always live in ~/watchy_config/, never in the git repo
+    secrets_path = os.path.expanduser("~/watchy_config/secrets.yaml")
     return _merge_secrets(config, secrets_path)
