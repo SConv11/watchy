@@ -187,30 +187,65 @@ def detect_signals(
         elif prev_above == 1 and not now_above:
             signals.append("macd_bearish_cross")
 
-    # --- Bollinger Band breach ---
+    # --- Level-based signals: fire only on ENTRY into the condition (#8) ---
+    # These hold for as long as price/volume/ATR stays past the threshold. Firing
+    # every scan (or every cooldown cycle) spams notifications, so we fire once on
+    # the transition from "not in condition" to "in condition" and stay quiet until
+    # it resets and re-crosses. `now[...]` is this scan's state; prev_state is the
+    # persisted state from last scan (int 0/1 or None → both falsy; truthy compare,
+    # never `is`, per #13).
+    now = compute_level_states(bundle)
+
     if bundle.bb_upper and bundle.bb_lower:
-        if price >= bundle.bb_upper:
+        if now["prev_bollinger_above_upper"] and not prev_state.get("prev_bollinger_above_upper"):
             signals.append("bollinger_upper_breach")
-        elif price <= bundle.bb_lower:
+        elif now["prev_bollinger_below_lower"] and not prev_state.get("prev_bollinger_below_lower"):
             signals.append("bollinger_lower_breach")
 
-    # --- Volume anomaly ---
+    # Volume anomaly — fire on entry; strong (≥2x) vs moderate (≥1.5x) by the
+    # ratio at the moment of entry.
     vol = bundle.volume
     avg_vol = bundle.avg_volume_20d
     if vol and avg_vol and avg_vol > 0:
-        ratio = vol / avg_vol
-        if ratio >= 2.0:
-            signals.append("volume_anomaly_strong")
-        elif ratio >= 1.5:
-            signals.append("volume_anomaly_moderate")
+        if now["prev_volume_anomaly"] and not prev_state.get("prev_volume_anomaly"):
+            ratio = vol / avg_vol
+            signals.append(
+                "volume_anomaly_strong" if ratio >= 2.0 else "volume_anomaly_moderate"
+            )
 
-    # --- ATR spike ---
-    atr = bundle.atr
-    avg_atr = bundle.avg_atr_20d
-    if atr and avg_atr and avg_atr > 0 and atr >= 1.5 * avg_atr:
+    # ATR spike — fire on entry.
+    if now["prev_atr_spike"] and not prev_state.get("prev_atr_spike"):
         signals.append("atr_spike")
 
     return signals
+
+
+def compute_level_states(bundle: IndicatorBundle) -> dict[str, int]:
+    """Current on/off state of each level-based signal condition (#8).
+
+    Returned keys match the persisted `prev_*` state columns: in detect_signals
+    these represent *this* scan's state (compared against the stored prev), and in
+    tier1._update_state the same dict is written back as next scan's prev.
+    """
+    price = bundle.current_price
+    above_upper = int(
+        price is not None and bundle.bb_upper is not None and price >= bundle.bb_upper
+    )
+    below_lower = int(
+        price is not None and bundle.bb_lower is not None and price <= bundle.bb_lower
+    )
+    vol_anomaly = 0
+    if bundle.volume and bundle.avg_volume_20d and bundle.avg_volume_20d > 0:
+        vol_anomaly = int(bundle.volume / bundle.avg_volume_20d >= 1.5)
+    atr_spike = 0
+    if bundle.atr and bundle.avg_atr_20d and bundle.avg_atr_20d > 0:
+        atr_spike = int(bundle.atr >= 1.5 * bundle.avg_atr_20d)
+    return {
+        "prev_bollinger_above_upper": above_upper,
+        "prev_bollinger_below_lower": below_lower,
+        "prev_volume_anomaly": vol_anomaly,
+        "prev_atr_spike": atr_spike,
+    }
 
 
 # How stale the cache's most-recent bar may be before yfinance-cache refetches

@@ -27,6 +27,7 @@ class StateStore:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_schema()
+        self._migrate()
 
     def _init_schema(self) -> None:
         self._conn.executescript("""
@@ -38,6 +39,12 @@ class StateStore:
                 prev_atr REAL,                         -- last ATR value
                 avg_volume_20d REAL,                   -- 20-day average volume
                 avg_atr_20d REAL,                      -- 20-day average ATR
+                -- transition flags for level-based signals (#8): bool of whether
+                -- the condition held last scan, so we only fire on entry.
+                prev_bollinger_above_upper INTEGER,
+                prev_bollinger_below_lower INTEGER,
+                prev_volume_anomaly INTEGER,
+                prev_atr_spike INTEGER,
                 last_full_analysis_ts TEXT,            -- ISO timestamp of last Tier 2 run
                 updated_ts TEXT                        -- last update timestamp
             );
@@ -70,6 +77,33 @@ class StateStore:
                 ON run_history(ticker, started_ts);
         """)
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the initial schema to a pre-existing DB.
+
+        `CREATE TABLE IF NOT EXISTS` never alters an existing table, so the live
+        VPS `state.db` won't gain new columns from a schema bump. ALTER TABLE each
+        missing column instead (idempotent — only adds what's absent). (#8)
+        """
+        new_columns = {
+            "prev_bollinger_above_upper": "INTEGER",
+            "prev_bollinger_below_lower": "INTEGER",
+            "prev_volume_anomaly": "INTEGER",
+            "prev_atr_spike": "INTEGER",
+        }
+        with self._lock:
+            existing = {
+                row[1] for row in self._conn.execute("PRAGMA table_info(ticker_state)")
+            }
+            added = []
+            for col, col_type in new_columns.items():
+                if col not in existing:
+                    self._conn.execute(
+                        f"ALTER TABLE ticker_state ADD COLUMN {col} {col_type}"
+                    )
+                    added.append(col)
+            if added:
+                self._conn.commit()
 
     # --- ticker state ---
 

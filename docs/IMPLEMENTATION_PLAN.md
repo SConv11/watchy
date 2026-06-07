@@ -113,7 +113,18 @@ run `tests/test_e2e.py` on one ticker before considering deploy.
   `get_pipeline("scheduled_daily")` — repoint to `get_scheduled_spec(...)`.
 - **Note:** keep a `get_pipeline` fallback so `"scheduled_daily"` as a `trigger_type` string elsewhere doesn't break.
 
-### #8 — Level-based signals re-fire (transition-aware)
+### #8 — Level-based signals re-fire (transition-aware) ✅ DONE
+- **`watchy/state.py`** → added the four `prev_*` columns to `_init_schema` AND a `_migrate()`
+  (`PRAGMA table_info` + `ALTER TABLE ADD COLUMN`, idempotent) called from `__init__` so the live
+  VPS `state.db` gains them. Tests: `TestMigration` (pre-migration DB → columns added, data survives,
+  idempotent).
+- **`watchy/indicators.py`** → new `compute_level_states(bundle)` returns the four on/off flags;
+  `detect_signals` fires Bollinger/Volume/ATR only on entry (`now and not prev`, truthy not `is`).
+- **`watchy/tier1.py`** → `_update_state` persists `**compute_level_states(bundle)`.
+- **Tests** → `TestLevelSignalTransitions`: entry / persist-silent / re-entry per signal.
+- README signal table gains a "fire on entry" semantics note.
+
+#### original plan
 - **`watchy/state.py`** → `_init_schema`: add columns `prev_bollinger_above_upper`,
   `prev_bollinger_below_lower`, `prev_volume_anomaly`, `prev_atr_spike` (INTEGER).
   **Add a migration** `_migrate()`: `PRAGMA table_info(ticker_state)` + `ALTER TABLE ... ADD COLUMN`

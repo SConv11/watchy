@@ -11,7 +11,12 @@ from typing import Any
 
 from watchy.advisor import get_advice
 from watchy.config import WatchyConfig
-from watchy.indicators import IndicatorBundle, compute_indicators, detect_signals
+from watchy.indicators import (
+    IndicatorBundle,
+    compute_indicators,
+    compute_level_states,
+    detect_signals,
+)
 from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
 from watchy.orchestrator import (
@@ -142,6 +147,8 @@ def _update_state(
         prev_atr=bundle.atr,
         avg_volume_20d=bundle.avg_volume_20d,
         avg_atr_20d=bundle.avg_atr_20d,
+        # transition flags for level-based signals (#8)
+        **compute_level_states(bundle),
     )
 
 

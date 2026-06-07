@@ -1,6 +1,7 @@
 """Tests for SQLite state store: CRUD, cooldown, run history."""
 
 import os
+import sqlite3
 import tempfile
 import threading
 
@@ -64,6 +65,67 @@ class TestSignalLog:
     def test_different_tickers_are_independent(self, store):
         store.log_signal("NVDA", "rsi_oversold")
         assert store.is_in_cooldown("TSLA", "rsi_oversold", 12.0) is False
+
+
+class TestMigration:
+    """The live VPS state.db predates the #8 level-signal columns; _migrate must
+    ALTER TABLE them in (CREATE TABLE IF NOT EXISTS won't)."""
+
+    NEW_COLS = [
+        "prev_bollinger_above_upper",
+        "prev_bollinger_below_lower",
+        "prev_volume_anomaly",
+        "prev_atr_spike",
+    ]
+
+    def _make_pre_migration_db(self, path):
+        """Create a ticker_state table with the *old* schema (no #8 columns)."""
+        conn = sqlite3.connect(path)
+        conn.executescript("""
+            CREATE TABLE ticker_state (
+                ticker TEXT PRIMARY KEY,
+                prev_sma_50_above_200 INTEGER,
+                prev_macd_above_signal INTEGER,
+                prev_rsi REAL,
+                prev_atr REAL,
+                avg_volume_20d REAL,
+                avg_atr_20d REAL,
+                last_full_analysis_ts TEXT,
+                updated_ts TEXT
+            );
+        """)
+        conn.execute(
+            "INSERT INTO ticker_state (ticker, prev_rsi) VALUES ('NVDA', 55.0)"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_migrate_adds_missing_columns_to_existing_db(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            self._make_pre_migration_db(path)
+            # Opening via StateStore should migrate in place.
+            store = StateStore(path)
+            cols = {row[1] for row in store._conn.execute("PRAGMA table_info(ticker_state)")}
+            for c in self.NEW_COLS:
+                assert c in cols, f"{c} not added by migration"
+            # existing data survives
+            assert store.get_ticker_state("NVDA")["prev_rsi"] == 55.0
+            # and the new columns are writable/readable
+            store.save_ticker_state("NVDA", prev_volume_anomaly=1)
+            assert store.get_ticker_state("NVDA")["prev_volume_anomaly"] == 1
+            store.close()
+        finally:
+            os.unlink(path)
+
+    def test_migrate_is_idempotent(self, store):
+        """Running migrate again on an already-migrated DB is a no-op, no error."""
+        store._migrate()
+        store._migrate()
+        cols = {row[1] for row in store._conn.execute("PRAGMA table_info(ticker_state)")}
+        for c in self.NEW_COLS:
+            assert c in cols
 
 
 class TestConcurrency:

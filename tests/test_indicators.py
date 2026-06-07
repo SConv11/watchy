@@ -236,6 +236,83 @@ class TestDetectSignals:
 
 
 # ---------------------------------------------------------------------------
+# Level-based signals fire only on entry (#8)
+# ---------------------------------------------------------------------------
+
+class TestLevelSignalTransitions:
+    """Bollinger / Volume / ATR must fire on entry into the condition and stay
+    quiet while it persists, re-firing only after it resets and re-crosses."""
+
+    def _bundle(self, **over):
+        b = IndicatorBundle(ticker="T")
+        # neutral defaults that trip nothing
+        b.current_price = 100.0
+        b.bb_upper = 110.0
+        b.bb_lower = 90.0
+        b.volume = 1_000_000
+        b.avg_volume_20d = 1_000_000
+        b.atr = 1.0
+        b.avg_atr_20d = 1.0
+        for k, v in over.items():
+            setattr(b, k, v)
+        return b
+
+    # --- Bollinger upper ---
+    def test_bollinger_upper_entry_fires(self):
+        b = self._bundle(current_price=115.0)  # >= bb_upper 110
+        assert "bollinger_upper_breach" in detect_signals(b, {})
+
+    def test_bollinger_upper_persist_silent(self):
+        b = self._bundle(current_price=115.0)
+        prev = {"prev_bollinger_above_upper": 1}
+        assert "bollinger_upper_breach" not in detect_signals(b, prev)
+
+    def test_bollinger_upper_reentry_fires(self):
+        b = self._bundle(current_price=115.0)
+        prev = {"prev_bollinger_above_upper": 0}  # reset since last breach
+        assert "bollinger_upper_breach" in detect_signals(b, prev)
+
+    # --- Bollinger lower ---
+    def test_bollinger_lower_entry_then_persist(self):
+        b = self._bundle(current_price=85.0)  # <= bb_lower 90
+        assert "bollinger_lower_breach" in detect_signals(b, {})
+        assert "bollinger_lower_breach" not in detect_signals(
+            b, {"prev_bollinger_below_lower": 1}
+        )
+
+    # --- Volume ---
+    def test_volume_entry_fires_strong_vs_moderate(self):
+        strong = self._bundle(volume=2_500_000)  # 2.5x
+        moderate = self._bundle(volume=1_700_000)  # 1.7x
+        assert "volume_anomaly_strong" in detect_signals(strong, {})
+        assert "volume_anomaly_moderate" in detect_signals(moderate, {})
+
+    def test_volume_persist_silent(self):
+        b = self._bundle(volume=2_500_000)
+        assert detect_signals(b, {"prev_volume_anomaly": 1}) == []
+
+    def test_volume_reentry_fires(self):
+        b = self._bundle(volume=2_500_000)
+        assert "volume_anomaly_strong" in detect_signals(b, {"prev_volume_anomaly": 0})
+
+    # --- ATR ---
+    def test_atr_entry_then_persist_then_reentry(self):
+        b = self._bundle(atr=2.0, avg_atr_20d=1.0)  # 2x >= 1.5x
+        assert "atr_spike" in detect_signals(b, {})  # entry
+        assert "atr_spike" not in detect_signals(b, {"prev_atr_spike": 1})  # persist
+        assert "atr_spike" in detect_signals(b, {"prev_atr_spike": 0})  # re-entry
+
+    def test_compute_level_states_matches_thresholds(self):
+        from watchy.indicators import compute_level_states
+        b = self._bundle(current_price=115.0, volume=2_500_000, atr=2.0, avg_atr_20d=1.0)
+        s = compute_level_states(b)
+        assert s["prev_bollinger_above_upper"] == 1
+        assert s["prev_bollinger_below_lower"] == 0
+        assert s["prev_volume_anomaly"] == 1
+        assert s["prev_atr_spike"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Regression: crossover detection through a real SQLite round-trip (#13)
 # ---------------------------------------------------------------------------
 
