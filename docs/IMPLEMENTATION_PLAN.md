@@ -136,7 +136,15 @@ run `tests/test_e2e.py` on one ticker before considering deploy.
 - **`tests/test_indicators.py`** → entry / persist / re-entry per level-based signal.
 - **Batch note:** same files as #13 (`detect_signals` + `_update_state`) — do right after #13.
 
-### #7 — Tier 1 market-hours guard
+### #7 — Tier 1 market-hours guard ✅ DONE
+- **`watchy/daemon.py`** → `_is_market_open(now)` prefers `exchange_calendars` (XNYS, already a
+  dependency via yfinance-cache → holiday- and DST-correct), degrading to `_regular_session_window`
+  (weekday + 13:30–20:00 UTC) if the calendar can't load. Guard at the top of `_tier1_job` (log DEBUG,
+  return). Tier 2 is intentionally NOT gated. Cached calendar object; failure latches to the fallback.
+- **`tests/test_daemon.py`** → window boundaries, weekend, holiday-aware (New Year closed / Jan-2 open,
+  guarded by `importorskip`), and the job-level guard (skips/runs scan_ticker).
+
+#### original plan
 - **`watchy/daemon.py`** → `_is_market_open()` (weekday + 13:30–20:00 UTC); guard at top of
   `_tier1_job` (log DEBUG, return). Optional `pandas_market_calendars` with weekday-only fallback.
 - **`tests/test_daemon.py`** (new) → `_is_market_open` across weekday/weekend/boundary (mock `datetime`).

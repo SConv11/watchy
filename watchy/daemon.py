@@ -12,6 +12,7 @@ import logging.handlers
 import os
 import signal
 import sys
+from datetime import datetime, time as dtime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -111,6 +112,49 @@ def build_scheduler(
     return scheduler
 
 
+# US regular-session hours in UTC during EDT (09:30–16:00 ET). Used only by the
+# weekday fallback; the exchange-calendar path handles DST + holidays correctly.
+_MARKET_OPEN_UTC = dtime(13, 30)
+_MARKET_CLOSE_UTC = dtime(20, 0)
+_market_calendar = None
+_market_calendar_failed = False
+
+
+def _regular_session_window(now: datetime) -> bool:
+    """Weekday + 13:30–20:00 UTC check (EDT hours; ~1h off under EST, no holidays).
+
+    Fallback for when exchange_calendars can't be loaded.
+    """
+    if now.weekday() >= 5:  # Sat/Sun
+        return False
+    return _MARKET_OPEN_UTC <= now.timetz().replace(tzinfo=None) <= _MARKET_CLOSE_UTC
+
+
+def _is_market_open(now: datetime | None = None) -> bool:
+    """True if the US equity market (XNYS) is in its regular session.
+
+    Prefers exchange_calendars (already a dependency via yfinance-cache) for
+    holiday- and DST-correct hours; degrades to a weekday+UTC-window check if the
+    calendar can't be loaded.
+    """
+    now = now or datetime.now(timezone.utc)
+    global _market_calendar, _market_calendar_failed
+    if not _market_calendar_failed:
+        try:
+            import pandas as pd
+            if _market_calendar is None:
+                import exchange_calendars as xcals
+                _market_calendar = xcals.get_calendar("XNYS")
+            return bool(_market_calendar.is_open_on_minute(pd.Timestamp(now).tz_convert("UTC")))
+        except Exception:
+            logging.getLogger("watchy.daemon").warning(
+                "exchange_calendars unavailable; using weekday/UTC-window market check",
+                exc_info=True,
+            )
+            _market_calendar_failed = True
+    return _regular_session_window(now)
+
+
 def _tier1_job(
     ticker: str,
     config: WatchyConfig,
@@ -120,6 +164,12 @@ def _tier1_job(
     ticker_locks: TickerLockRegistry | None = None,
 ) -> None:
     logger = logging.getLogger("watchy.daemon")
+    # Tier 1 reacts to live price action — outside the regular session the bars
+    # don't change, so skip the scan entirely (#7). Tier 2 is NOT gated this way:
+    # it runs daily regardless (weekend news/sentiment still matter).
+    if not _is_market_open():
+        logger.debug("Tier 1 %s skipped — US market closed", ticker)
+        return
     try:
         fired = scan_ticker(
             ticker, config, store, notifier,
