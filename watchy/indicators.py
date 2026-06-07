@@ -213,8 +213,35 @@ def detect_signals(
     return signals
 
 
+def _is_rate_limit(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "429" in msg or "rate" in msg or "too many" in msg
+
+
+def _history_via_cache_or_direct(ticker: str, yf, yfc) -> pd.DataFrame | None:
+    """Fetch 1y daily history, preferring the on-disk cache (#2).
+
+    `yfinance_cache` only fetches new/outdated bars, cutting redundant Yahoo
+    requests. It's verified numerically identical to yfinance
+    (scripts/validate_yfc.py). Robustness: a rate-limit error bubbles up to the
+    caller's backoff loop, but any *other* yfc failure (e.g. a yfinance/yfc
+    metadata incompatibility) degrades to plain yfinance instead of crashing.
+    """
+    if yfc is not None:
+        try:
+            return yfc.Ticker(ticker).history(period="1y", interval="1d")
+        except Exception as exc:  # noqa: BLE001
+            if _is_rate_limit(exc):
+                raise
+            logger.warning(
+                "yfinance-cache failed for %s (%s); falling back to yfinance",
+                ticker, type(exc).__name__,
+            )
+    return yf.Ticker(ticker).history(period="1y", interval="1d")
+
+
 def _fetch_history(ticker: str) -> pd.DataFrame | None:
-    """Fetch OHLCV data from yfinance with rate-limit awareness."""
+    """Fetch OHLCV data with disk caching and rate-limit awareness."""
     import time
 
     try:
@@ -223,17 +250,22 @@ def _fetch_history(ticker: str) -> pd.DataFrame | None:
         logger.error("yfinance not installed")
         return None
 
+    # Optional disk-cache layer; degrade to plain yfinance if not installed.
+    try:
+        import yfinance_cache as yfc
+    except ImportError:
+        yfc = None
+
     for attempt in range(3):
         try:
-            t = yf.Ticker(ticker)
-            df = t.history(period="1y", interval="1d")
-            if df.empty:
+            df = _history_via_cache_or_direct(ticker, yf, yfc)
+            if df is None or df.empty:
+                # download() has no cache equivalent — use plain yfinance.
                 df = yf.download(ticker, period="1y", interval="1d", progress=False)
-            if not df.empty:
+            if df is not None and not df.empty:
                 return df
         except Exception as exc:
-            msg = str(exc).lower()
-            if "429" in msg or "rate" in msg or "too many" in msg:
+            if _is_rate_limit(exc):
                 wait = (attempt + 1) * 5
                 logger.warning(
                     "yfinance rate-limited for %s (attempt %d/3), waiting %ds…",

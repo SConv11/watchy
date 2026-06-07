@@ -69,11 +69,22 @@ run `tests/test_e2e.py` on one ticker before considering deploy.
 - **`watchy/tier2.py`** → `run_daily_scan`: `import time`; `if i > 0: time.sleep(config.tier2_throttle_s)`.
 - **`tests/test_tier2.py`** (new) → mock `time.sleep`, assert `len(tickers)-1` calls; mock `_run_ticker`.
 
-### #2 — yfinance disk caching (optional / dependency)
-- **`requirements.txt` + `pyproject.toml`** → add `yfinance-cache` (guarded).
-- **`watchy/indicators.py`** → `_fetch_history`: `try: import yfinance_cache as yf except ImportError: import yfinance as yf`. Confirm cache API matches `Ticker(...).history(...)`; ~30-min TTL.
-- **`tests/test_indicators.py`** → fallback path when `yfinance_cache` absent.
-- **Note:** optional — if the lib looks risky at implementation time, rely on #1 throttle and keep open.
+### #2 — yfinance disk caching ✅ DONE
+- **Validated first** (`scripts/validate_yfc.py`, run on the VPS): yfinance-cache 0.8.0 returns
+  data numerically identical to yfinance — Close `max|Δ|≤0.0001`, SMA/RSI/MACD `rel=0.0000%`,
+  same last trading-day bar. (Intraday-staleness — last incomplete bar refreshing mid-session —
+  can only be checked while the US market is open; deferred to a weekday spot-check.)
+  Note: on the local Windows/anaconda env yfc raises `KeyError: exchangeTimezoneName` at
+  `Ticker()` init — a yfinance metadata incompatibility — hence the robust fallback below.
+- **`requirements.txt` + `pyproject.toml`** → added `yfinance-cache>=0.8.0`.
+- **`watchy/indicators.py`** → new `_history_via_cache_or_direct(ticker, yf, yfc)` used by
+  `_fetch_history`: prefer `yfc.Ticker(...).history(...)`; **a 429 bubbles up to the backoff loop,
+  any other yfc error degrades to plain yfinance** (so a yfc/metadata incompat never crashes a scan);
+  `yfinance_cache` is imported with an `ImportError` guard. `yf.download` fallback stays on plain
+  yfinance (yfc has no `download`). The cache is calendar-aware, not a fixed-TTL — better than the
+  "~30-min TTL" originally assumed.
+- **`tests/test_indicators.py`** → `TestHistoryCacheFallback`: cache-used, cache-absent→yfinance,
+  structural-error→degrade, 429→propagate.
 
 ---
 

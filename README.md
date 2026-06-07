@@ -87,9 +87,14 @@ journalctl -u watchy -f  # 查看日志
 | `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔和 Tier 2 UTC 时间 |
 | `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
 | `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
+| `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |
 | `llm` | 顾问 LLM 配置——支持 Gemini、DeepSeek、OpenAI、Anthropic |
 | `telegram` | Telegram 机器人令牌（bot token）和聊天 ID |
 | `schwab` | Schwab 券商凭证（可选——启用后获得持仓感知建议） |
+
+> **数据获取与缓存**：行情通过 `yfinance` 获取，并叠加 `yfinance-cache` 磁盘缓存层
+> （智能缓存，仅拉取缺失/过期的 bar），减少对 Yahoo 的重复请求。缓存层为可选依赖——
+> 未安装时自动退回纯 `yfinance`；缓存出现非限流错误时也会优雅降级，不影响扫描。
 
 ## 信号检测（Signals Detected）
 

@@ -1,5 +1,7 @@
 """Tests for indicators: computation and signal detection with synthetic data."""
 
+from unittest.mock import MagicMock
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -10,6 +12,7 @@ from watchy.indicators import (
     detect_signals,
     _compute_rsi,
     _classify_sepa_stage,
+    _history_via_cache_or_direct,
 )
 
 
@@ -309,6 +312,59 @@ class TestCrossoverStateRoundTrip:
         assert "golden_cross" not in signals
         assert "death_cross" not in signals
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# History fetch: yfinance-cache layer with robust fallback (#2)
+# ---------------------------------------------------------------------------
+
+class TestHistoryCacheFallback:
+    def _df(self):
+        return make_ohlcv([100.0] * 5)
+
+    def test_uses_cache_when_available(self):
+        df = self._df()
+        yfc = MagicMock()
+        yfc.Ticker.return_value.history.return_value = df
+        yf = MagicMock()
+
+        out = _history_via_cache_or_direct("AAPL", yf, yfc)
+        assert out is df
+        yfc.Ticker.assert_called_once_with("AAPL")
+        yf.Ticker.assert_not_called()  # never touched plain yfinance
+
+    def test_falls_back_to_yfinance_when_cache_absent(self):
+        df = self._df()
+        yf = MagicMock()
+        yf.Ticker.return_value.history.return_value = df
+
+        out = _history_via_cache_or_direct("AAPL", yf, None)
+        assert out is df
+        yf.Ticker.assert_called_once_with("AAPL")
+
+    def test_cache_structural_error_degrades_to_yfinance(self):
+        """A non-rate-limit yfc failure (e.g. metadata KeyError) must not crash
+        — it degrades to plain yfinance."""
+        df = self._df()
+        yfc = MagicMock()
+        yfc.Ticker.return_value.history.side_effect = KeyError("exchangeTimezoneName")
+        yf = MagicMock()
+        yf.Ticker.return_value.history.return_value = df
+
+        out = _history_via_cache_or_direct("AAPL", yf, yfc)
+        assert out is df
+        yf.Ticker.assert_called_once_with("AAPL")
+
+    def test_cache_rate_limit_propagates(self):
+        """A 429 from the cache must bubble up to the caller's backoff loop,
+        not silently fall back."""
+        yfc = MagicMock()
+        yfc.Ticker.return_value.history.side_effect = Exception("429 Too Many Requests")
+        yf = MagicMock()
+
+        with pytest.raises(Exception, match="429"):
+            _history_via_cache_or_direct("AAPL", yf, yfc)
+        yf.Ticker.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
