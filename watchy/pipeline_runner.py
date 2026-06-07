@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -335,9 +336,15 @@ def _format_result(
 
     analysts_run = [_ANALYST_LABELS.get(a, a) for a in selected_analysts]
 
+    # Structured one-word verdict (#3) — the headline BUY/SELL/HOLD, surfaced so
+    # notifications can show it without the reader parsing the whole summary.
+    verdict = _extract_verdict(str(final_decision) or decision_text)
+
     return {
         "ticker": ticker,
         "analysts_run": analysts_run,
+        "analyst_count": len(analysts_run),
+        "verdict": verdict,
         "debate": spec.debate.value,
         "risk_mode": spec.risk.value,
         "recommendations": recommendations,
@@ -347,3 +354,20 @@ def _format_result(
         "_reports": reports,
         "_decision_raw": decision_text,
     }
+
+
+def _extract_verdict(text: str) -> str:
+    """Pull a one-word BUY / SELL / HOLD verdict from the final decision text.
+
+    Prefers TradingAgents' explicit "FINAL TRANSACTION PROPOSAL: **BUY**" marker;
+    falls back to the first standalone BUY/SELL/HOLD keyword. Returns "" if none.
+    """
+    if not text:
+        return ""
+    m = re.search(
+        r"FINAL TRANSACTION PROPOSAL:\s*\*{0,2}\s*(BUY|SELL|HOLD)", text, re.IGNORECASE
+    )
+    if m:
+        return m.group(1).upper()
+    m = re.search(r"\b(BUY|SELL|HOLD)\b", text, re.IGNORECASE)
+    return m.group(1).upper() if m else ""

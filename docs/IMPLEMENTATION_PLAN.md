@@ -174,7 +174,17 @@ run `tests/test_e2e.py` on one ticker before considering deploy.
   bearish+held→run; bearish+`SchwabError`→run; `rsi_overbought`+empty→run; Schwab disabled→run.
 - **`README`** → one-time OAuth setup + weekly re-auth note.
 
-### #3 — Telegram content (after #11)
+### #3 — Telegram content (after #11) ✅ DONE
+- **`watchy/pipeline_runner.py`** → `_format_result` surfaces `verdict` (one-word BUY/SELL/HOLD via
+  new `_extract_verdict`, preferring the "FINAL TRANSACTION PROPOSAL: **X**" marker) and
+  `analyst_count`.
+- **`watchy/notify.py`** → `pipeline_result` adds a headline `Verdict: <icon> X (N analysts)` line and
+  bumps the summary cap 200→400 (chunking from #11 covers the extra length).
+- **Tests** → `test_pipeline_runner.py::TestExtractVerdict` + verdict/count in `_format_result`;
+  `test_notify.py::TestPipelineResultContent` (verdict line present/absent, 400-char summary,
+  chunk-safe). README Telegram example + Tier 2 cadence row updated.
+
+#### original plan
 - **`watchy/notify.py`** → `pipeline_result`: bump summary 200→400; add an analyst-verdict line;
   rely on #11 splitting for length.
 - **`watchy/pipeline_runner.py`** → `_format_result`: surface a small structured verdict/count field
@@ -214,8 +224,9 @@ run `tests/test_e2e.py` on one ticker before considering deploy.
 
 ## Resolved design decisions (context)
 - **#13** crossover fix → `== 0` / `== 1` (not `not prev_above`, which false-fires on first scan).
-- **#14** Tier 2 → daily Market+Sentiment+News+Fundamentals (simplified risk); **Sunday** adds the
-  3-way risk debate (`RiskMode.FULL`).
+- **#14** Tier 2 → Market+Sentiment+News+Fundamentals (simplified risk); **Sunday** adds the
+  3-way risk debate (`RiskMode.FULL`). **Saturday is skipped** (`daemon._is_tier2_day`) — it reuses
+  Friday's frozen close, is superseded by Sunday's run, and nothing trades until Monday.
 - **#4** Schwab → confirmed must-do; the former **#6** bearish-skip is folded in (skip only
   `death_cross`/`macd_bearish_cross` on a *confirmed-empty* position, Tier 1 only).
 - **Order** → P0 (#13, #10, #11) first, then the rest; no deploy until all done.

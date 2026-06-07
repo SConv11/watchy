@@ -165,15 +165,25 @@ class TelegramNotifier:
         rec_text = esc(", ".join(recs) if recs else "no actionable recommendation")
         risk = esc(result.get("risk_assessment") or "not assessed")
         summary = result.get("summary", "")
+        verdict = result.get("verdict", "")
+        analyst_count = result.get("analyst_count")
 
         lines = [
             f"<b>Analysis Complete</b> — ${ticker}",
             f"<b>Trigger:</b> {_signal_label(signal_type)}",
+        ]
+        # Headline verdict line (#3): one-word BUY/SELL/HOLD + how many analysts ran.
+        if verdict:
+            icon = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(verdict, "")
+            suffix = f" ({analyst_count} analysts)" if analyst_count else ""
+            lines.append(f"<b>Verdict:</b> {icon} <b>{esc(verdict)}</b>{suffix}")
+        lines += [
             f"<b>Recommendation:</b> {rec_text}",
             f"<b>Risk:</b> {risk}",
         ]
         if summary:
-            short = esc(summary[:200] + "..." if len(summary) > 200 else summary)
+            # #3: give the summary more room now that #11 chunks long messages.
+            short = esc(summary[:400] + "..." if len(summary) > 400 else summary)
             lines.append(f"<b>Summary:</b> {short}")
 
         # position context

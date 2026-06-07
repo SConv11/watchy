@@ -5,7 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from watchy.daemon import _is_market_open, _regular_session_window, _tier1_job
+from watchy.daemon import (
+    _is_market_open,
+    _is_tier2_day,
+    _regular_session_window,
+    _tier1_job,
+    _tier2_job,
+)
 
 
 def _utc(y, m, d, hh, mm):
@@ -68,4 +74,29 @@ class TestTier1JobGuard:
         with patch("watchy.daemon._is_market_open", return_value=True), \
              patch("watchy.daemon.scan_ticker", return_value=[]) as mock_scan:
             _tier1_job(*self._args())
+        mock_scan.assert_called_once()
+
+
+class TestTier2DayGuard:
+    # 2026-06-06 is a Saturday; 2026-06-07 Sunday; 2026-06-01..05 Mon–Fri.
+    def test_saturday_is_not_a_tier2_day(self):
+        assert _is_tier2_day(_utc(2026, 6, 6, 11, 30)) is False
+
+    def test_sunday_is_a_tier2_day(self):
+        assert _is_tier2_day(_utc(2026, 6, 7, 11, 30)) is True
+
+    def test_weekdays_are_tier2_days(self):
+        for d in range(1, 6):  # Mon–Fri
+            assert _is_tier2_day(_utc(2026, 6, d, 11, 30)) is True
+
+    def test_job_skips_on_saturday(self):
+        with patch("watchy.daemon._is_tier2_day", return_value=False), \
+             patch("watchy.daemon.run_daily_scan") as mock_scan:
+            _tier2_job(MagicMock(), MagicMock(), MagicMock())
+        mock_scan.assert_not_called()
+
+    def test_job_runs_on_non_saturday(self):
+        with patch("watchy.daemon._is_tier2_day", return_value=True), \
+             patch("watchy.daemon.run_daily_scan") as mock_scan:
+            _tier2_job(MagicMock(), MagicMock(), MagicMock())
         mock_scan.assert_called_once()

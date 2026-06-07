@@ -9,6 +9,7 @@ from watchy.orchestrator import AnalystSet, DebateMode, PipelineSpec, RiskMode
 from watchy.pipeline_runner import (
     _ANALYST_MAP,
     _ANALYST_LABELS,
+    _extract_verdict,
     _format_result,
     _map_analysts,
     _map_debate,
@@ -16,6 +17,28 @@ from watchy.pipeline_runner import (
     _save_report,
     DEFAULT_REPORTS_DIR,
 )
+
+
+class TestExtractVerdict:
+    def test_explicit_final_proposal_marker(self):
+        assert _extract_verdict("... FINAL TRANSACTION PROPOSAL: **BUY**") == "BUY"
+
+    def test_marker_without_asterisks(self):
+        assert _extract_verdict("FINAL TRANSACTION PROPOSAL: SELL") == "SELL"
+
+    def test_case_insensitive(self):
+        assert _extract_verdict("final transaction proposal: hold") == "HOLD"
+
+    def test_fallback_keyword(self):
+        assert _extract_verdict("My recommendation is to HOLD for now.") == "HOLD"
+
+    def test_empty_or_no_verdict(self):
+        assert _extract_verdict("") == ""
+        assert _extract_verdict("no clear call here") == ""
+
+    def test_marker_wins_over_stray_keyword(self):
+        text = "Some say buy, others sell. FINAL TRANSACTION PROPOSAL: **HOLD**"
+        assert _extract_verdict(text) == "HOLD"
 
 
 class TestAnalystMapping:
@@ -150,6 +173,24 @@ class TestFormatResult:
         )
         result = _format_result("A", spec, ["market"], {}, "BUY")
         assert result["_decision_raw"] == "BUY"
+
+    def test_surfaces_verdict_and_analyst_count(self):
+        """#3: structured verdict + analyst count for the notification headline."""
+        spec = PipelineSpec(AnalystSet.FULL, DebateMode.BULL_BEAR, RiskMode.SIMPLIFIED)
+        final_state = {
+            "final_trade_decision": "FINAL TRANSACTION PROPOSAL: **BUY**",
+        }
+        result = _format_result(
+            "AAPL", spec, ["market", "social", "news", "fundamentals"], final_state, "BUY"
+        )
+        assert result["verdict"] == "BUY"
+        assert result["analyst_count"] == 4
+
+    def test_empty_verdict_when_no_decision(self):
+        spec = PipelineSpec(AnalystSet.MARKET_ONLY, DebateMode.NONE, RiskMode.NONE)
+        result = _format_result("A", spec, ["market"], {}, None)
+        assert result["verdict"] == ""
+        assert result["analyst_count"] == 1
 
 
 class TestSaveReport:

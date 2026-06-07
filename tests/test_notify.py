@@ -82,3 +82,62 @@ class TestSendChunking:
         with patch.object(notifier, "_post", side_effect=[True, False, True]):
             ok = notifier.send(text)
         assert ok is False
+
+
+class TestPipelineResultContent:
+    """#3: richer pipeline_result — verdict headline + longer summary, chunk-safe."""
+
+    def _notifier(self):
+        return TelegramNotifier(bot_token="tok", chat_id="123")
+
+    def _sent_text(self, mock_post):
+        # concatenate every chunk's text payload
+        return "\n".join(call.args[1]["text"] for call in mock_post.call_args_list)
+
+    def test_verdict_line_and_count_present(self):
+        notifier = self._notifier()
+        result = {
+            "verdict": "BUY",
+            "analyst_count": 4,
+            "recommendations": ["[Market] strong"],
+            "risk_assessment": "moderate",
+            "summary": "short summary",
+        }
+        with patch.object(notifier, "_post", return_value=True) as mock_post:
+            notifier.pipeline_result("AAPL", "golden_cross", result)
+        text = self._sent_text(mock_post)
+        assert "Verdict:" in text
+        assert "BUY" in text
+        assert "4 analysts" in text
+
+    def test_no_verdict_line_when_absent(self):
+        notifier = self._notifier()
+        result = {"summary": "x", "recommendations": []}
+        with patch.object(notifier, "_post", return_value=True) as mock_post:
+            notifier.pipeline_result("AAPL", "golden_cross", result)
+        assert "Verdict:" not in self._sent_text(mock_post)
+
+    def test_summary_allows_400_chars(self):
+        notifier = self._notifier()
+        summary = "A" * 350  # between old 200 and new 400 cap → not truncated
+        result = {"summary": summary, "recommendations": []}
+        with patch.object(notifier, "_post", return_value=True) as mock_post:
+            notifier.pipeline_result("AAPL", "golden_cross", result)
+        text = self._sent_text(mock_post)
+        assert "A" * 350 in text  # full 350 present, not cut at 200
+
+    def test_long_message_is_chunk_safe(self):
+        notifier = self._notifier()
+        result = {
+            "verdict": "SELL",
+            "analyst_count": 4,
+            "recommendations": ["[Market] " + "x" * 5000],  # force >4096
+            "risk_assessment": "r",
+            "summary": "s",
+        }
+        with patch.object(notifier, "_post", return_value=True) as mock_post:
+            ok = notifier.pipeline_result("AAPL", "death_cross", result)
+        assert ok is True
+        assert mock_post.call_count >= 2
+        for call in mock_post.call_args_list:
+            assert len(call.args[1]["text"]) <= _WORKING_LIMIT

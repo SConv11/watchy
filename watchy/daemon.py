@@ -182,6 +182,18 @@ def _tier1_job(
         notifier.error(f"Tier 1 job: {ticker}", sys.exc_info()[1])
 
 
+def _is_tier2_day(now: datetime | None = None) -> bool:
+    """Tier 2 runs every day except Saturday (#14 cadence refinement).
+
+    Sat–Mon all analyze the same frozen Friday close; Saturday's run is superseded
+    by Sunday's (which adds the weekly 3-way risk debate and more complete weekend
+    news), and nothing is tradable until Monday — so Saturday is redundant cost.
+    Sunday and the weekdays still run.
+    """
+    now = now or datetime.now(timezone.utc)
+    return now.weekday() != 5  # 5 = Saturday
+
+
 def _tier2_job(
     config: WatchyConfig,
     store: StateStore,
@@ -190,6 +202,9 @@ def _tier2_job(
     ticker_locks: TickerLockRegistry | None = None,
 ) -> None:
     logger = logging.getLogger("watchy.daemon")
+    if not _is_tier2_day():
+        logger.debug("Tier 2 skipped — Saturday (redundant with Sunday's run)")
+        return
     try:
         run_daily_scan(
             config, store, notifier,
