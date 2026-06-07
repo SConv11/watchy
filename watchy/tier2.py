@@ -1,15 +1,18 @@
-"""Tier 2 — scheduled daily full pipeline.
+"""Tier 2 — scheduled daily pipeline.
 
 Runs the full TradingAgents 4-analyst pipeline (Market, Sentiment, News,
-Fundamentals) with full debate and risk management for every ticker on the
-watchlist.  Catches gradual drift and fundamental shifts that technical
-triggers miss.
+Fundamentals) with Bull/Bear debate for every ticker on the watchlist, catching
+gradual drift and fundamental shifts that technical triggers miss.
+
+Risk depth is day-of-week dependent (#14): simplified risk on weekdays, the full
+3-way risk debate on Sundays. See orchestrator.get_scheduled_spec.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from watchy.advisor import get_advice
@@ -17,17 +20,11 @@ from watchy.config import WatchyConfig
 from watchy.indicators import compute_indicators
 from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
-from watchy.orchestrator import AnalystSet, DebateMode, PipelineSpec, RiskMode, run_pipeline
+from watchy.orchestrator import get_scheduled_spec, run_pipeline
 from watchy.schwab import SchwabClient
 from watchy.state import StateStore
 
 logger = logging.getLogger(__name__)
-
-FULL_PIPELINE = PipelineSpec(
-    analysts=AnalystSet.MARKET_SENTIMENT_NEWS,
-    debate=DebateMode.BULL_BEAR,
-    risk=RiskMode.SIMPLIFIED,
-)
 
 
 def run_daily_scan(
@@ -90,10 +87,12 @@ def _run_ticker(
     from contextlib import nullcontext
     lock = ticker_locks.get(ticker) if ticker_locks else nullcontext()
 
+    spec = get_scheduled_spec(datetime.now(timezone.utc))
+
     with lock:
         run_id = store.start_run(ticker, "tier2", "scheduled_daily")
         try:
-            result = run_pipeline(ticker, FULL_PIPELINE, runner=pipeline_runner)
+            result = run_pipeline(ticker, spec, runner=pipeline_runner)
             if stage_context:
                 result.setdefault("stage_context", stage_context)
             store.complete_run(run_id, success=True, summary=result.get("summary", ""))

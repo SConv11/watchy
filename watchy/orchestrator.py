@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable
 
@@ -48,15 +49,12 @@ class PipelineSpec:
 
 
 # --- Signal → Pipeline mapping ---
+#
+# NOTE: the Tier 2 scheduled run is NOT a key here — its depth depends on the day
+# of week (see get_scheduled_spec). get_pipeline("scheduled_daily") delegates to
+# that helper so the trigger-type string still resolves correctly.
 
 SIGNAL_PIPELINE: dict[str, PipelineSpec] = {
-    # Tier 2 scheduled daily — full depth
-    "scheduled_daily": PipelineSpec(
-        analysts=AnalystSet.FULL,
-        debate=DebateMode.BULL_BEAR,
-        risk=RiskMode.FULL,
-    ),
-
     # Golden/Death Cross — rare structural events, add News + full risk
     "golden_cross": PipelineSpec(
         analysts=AnalystSet.MARKET_SENTIMENT_NEWS,
@@ -128,11 +126,33 @@ SIGNAL_PIPELINE: dict[str, PipelineSpec] = {
 }
 
 
+def get_scheduled_spec(when: datetime) -> PipelineSpec:
+    """Pipeline spec for a Tier 2 scheduled daily run (#14).
+
+    Daily (any weekday): the full 4-analyst set (Market, Sentiment, News,
+    Fundamentals) + Bull/Bear debate + *simplified* risk.
+
+    Sundays (``weekday() == 6``): escalate to ``RiskMode.FULL`` — the 3-way
+    Aggressive/Conservative/Neutral risk debate — so every ticker gets guaranteed
+    weekly risk-debate coverage. The debate is expensive, hence weekly not daily.
+    """
+    return PipelineSpec(
+        analysts=AnalystSet.FULL,
+        debate=DebateMode.BULL_BEAR,
+        risk=RiskMode.FULL if when.weekday() == 6 else RiskMode.SIMPLIFIED,
+    )
+
+
 def get_pipeline(signal_type: str) -> PipelineSpec:
     """Return the pipeline spec for a signal type.
 
-    Falls back to MARKET_SENTIMENT + simplified risk for unknown signals.
+    The Tier 2 ``"scheduled_daily"`` trigger delegates to get_scheduled_spec
+    (its depth is day-of-week dependent). Unknown signals fall back to
+    MARKET_SENTIMENT + simplified risk.
     """
+    if signal_type == "scheduled_daily":
+        return get_scheduled_spec(datetime.now(timezone.utc))
+
     spec = SIGNAL_PIPELINE.get(signal_type)
     if spec is not None:
         return spec
