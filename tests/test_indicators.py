@@ -333,6 +333,20 @@ class TestHistoryCacheFallback:
         yfc.Ticker.assert_called_once_with("AAPL")
         yf.Ticker.assert_not_called()  # never touched plain yfinance
 
+    def test_cache_call_bounds_staleness_with_max_age(self):
+        """yfc must be called with an explicit small max_age, not its 12h default,
+        so the intraday forming bar stays fresh (#2 staleness guard)."""
+        from watchy.indicators import _CACHE_MAX_AGE
+
+        yfc = MagicMock()
+        yfc.Ticker.return_value.history.return_value = self._df()
+        yf = MagicMock()
+
+        _history_via_cache_or_direct("AAPL", yf, yfc)
+        _, kwargs = yfc.Ticker.return_value.history.call_args
+        assert kwargs.get("max_age") == _CACHE_MAX_AGE
+        assert _CACHE_MAX_AGE < pd.Timedelta(hours=1)
+
     def test_falls_back_to_yfinance_when_cache_absent(self):
         df = self._df()
         yf = MagicMock()

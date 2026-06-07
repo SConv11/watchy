@@ -83,8 +83,19 @@ run `tests/test_e2e.py` on one ticker before considering deploy.
   `yfinance_cache` is imported with an `ImportError` guard. `yf.download` fallback stays on plain
   yfinance (yfc has no `download`). The cache is calendar-aware, not a fixed-TTL — better than the
   "~30-min TTL" originally assumed.
+- **Staleness guard:** yfc's default `max_age` for a 1d interval is **12h** — too stale for an
+  intraday "current price" scanner (the forming bar could lag up to 12h). `_history_via_cache_or_direct`
+  passes `max_age=_CACHE_MAX_AGE` (10min) so yfc refetches only the forming bar (cheap delta) and
+  Tier 1 sees a near-live price; yfc's calendar-awareness still avoids refetching a finalized bar when
+  the market is closed.
 - **`tests/test_indicators.py`** → `TestHistoryCacheFallback`: cache-used, cache-absent→yfinance,
-  structural-error→degrade, 429→propagate.
+  structural-error→degrade, 429→propagate, **max_age bounded** (<1h, not the 12h default).
+- **Still TODO (weekday):** `scripts/validate_yfc.py::check_intraday_staleness` verifies, during a US
+  session, that the forming bar under `max_age` tracks a live yfinance fetch (and prints yfc's
+  `Final?`/`FetchDate`). If max_age proves insufficient, add a post-hoc degrade guard: when the last
+  row is non-final (yfc `Final?`==False) yet its `FetchDate` is stale, refetch via plain yfinance.
+  Not built yet — would rest on the forming-bar column semantics that can only be observed/tested
+  while the market is open.
 
 ---
 

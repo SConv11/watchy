@@ -19,13 +19,14 @@ checked while the US market is open — noted, not asserted here.
 from __future__ import annotations
 
 import sys
+from datetime import datetime, time, timezone
 
 import pandas as pd
 
 import yfinance as yf
 import yfinance_cache as yfc
 
-from watchy.indicators import compute_indicators
+from watchy.indicators import _CACHE_MAX_AGE, compute_indicators
 
 TICKERS = ["AAPL", "NVDA", "MSFT"]
 CLOSE_TOL = 0.01  # 1 cent
@@ -79,6 +80,40 @@ def _compare_indicators(ticker, yf_df, yfc_df):
     return out
 
 
+def _us_market_open(now: datetime | None = None) -> bool:
+    """Rough US regular-session check: weekday, 13:30–20:00 UTC (ignores holidays)."""
+    now = now or datetime.now(timezone.utc)
+    if now.weekday() >= 5:
+        return False
+    return time(13, 30) <= now.timetz().replace(tzinfo=None) <= time(20, 0)
+
+
+def check_intraday_staleness(ticker: str = "AAPL") -> None:
+    """Confirm yfc's forming bar is fresh under our max_age (run on a weekday).
+
+    With _CACHE_MAX_AGE passed, yfc should refetch the still-forming daily bar so
+    its last Close tracks a live yfinance fetch. Prints yfc's Final?/FetchDate for
+    the last row (those drive the would-be degrade guard if max_age proves
+    insufficient). No-op with a message when the market is closed.
+    """
+    print("\n=== intraday staleness ===")
+    if not _us_market_open():
+        print("  SKIP — US market closed (run on a weekday 13:30–20:00 UTC to test)")
+        return
+
+    yfc_df = yfc.Ticker(ticker).history(period="5d", interval="1d", max_age=_CACHE_MAX_AGE)
+    yf_df = yf.Ticker(ticker).history(period="5d", interval="1d")
+    yfc_last = float(yfc_df["Close"].iloc[-1])
+    yf_last = float(yf_df["Close"].iloc[-1])
+    rel = abs(yfc_last - yf_last) / (abs(yf_last) + 1e-9)
+    flag = "" if rel < 0.002 else "  <-- STALE: yfc lags live yfinance >0.2%"
+    print(f"  {ticker}: yfc_last={yfc_last:.4f}  yf_live={yf_last:.4f}  rel={rel:.4%}{flag}")
+    for col in ("Final?", "FetchDate"):
+        if col in yfc_df.columns:
+            print(f"  yfc last-row {col}: {yfc_df[col].iloc[-1]}")
+    print(f"  (max_age={_CACHE_MAX_AGE})")
+
+
 def main() -> int:
     any_fail = False
     for ticker in TICKERS:
@@ -109,6 +144,8 @@ def main() -> int:
             print(f"    {line}")
             if "DRIFT" in line:
                 any_fail = True
+
+    check_intraday_staleness()
 
     print("\n" + ("FAIL — see issues above" if any_fail else "OK — yfc compatible"))
     return 1 if any_fail else 0

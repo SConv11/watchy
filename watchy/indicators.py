@@ -213,6 +213,15 @@ def detect_signals(
     return signals
 
 
+# How stale the cache's most-recent bar may be before yfinance-cache refetches
+# it. yfc's default for a 1d interval is 12h — far too stale for an intraday
+# "current price" scanner. A small value makes yfc refetch only the forming bar
+# (cheap delta, not the full year) so Tier 1 sees a near-live price, while yfc's
+# market-calendar awareness still avoids pointless refetches when the market is
+# closed (a finalized bar won't change).
+_CACHE_MAX_AGE = pd.Timedelta(minutes=10)
+
+
 def _is_rate_limit(exc: Exception) -> bool:
     msg = str(exc).lower()
     return "429" in msg or "rate" in msg or "too many" in msg
@@ -226,10 +235,13 @@ def _history_via_cache_or_direct(ticker: str, yf, yfc) -> pd.DataFrame | None:
     (scripts/validate_yfc.py). Robustness: a rate-limit error bubbles up to the
     caller's backoff loop, but any *other* yfc failure (e.g. a yfinance/yfc
     metadata incompatibility) degrades to plain yfinance instead of crashing.
+    `max_age` bounds how stale the latest bar may be (see _CACHE_MAX_AGE).
     """
     if yfc is not None:
         try:
-            return yfc.Ticker(ticker).history(period="1y", interval="1d")
+            return yfc.Ticker(ticker).history(
+                period="1y", interval="1d", max_age=_CACHE_MAX_AGE,
+            )
         except Exception as exc:  # noqa: BLE001
             if _is_rate_limit(exc):
                 raise
