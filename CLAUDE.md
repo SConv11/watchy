@@ -3,6 +3,22 @@
 Watchy is a stock-monitoring daemon built on top of TradingAgents.
 Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM pipeline.
 
+## Current status — read first (updated 2026-06-07)
+
+The issue backlog (#1–#14) is **done except #4**. All committed, pushed, 160 unit tests green;
+fixed issues are closed on GitHub. **Remind the user of these at session start:**
+
+- **#4 — position data source** (the only open issue): design is OPEN. Schwab API is blocked for
+  now (OAuth + 7-day refresh-token reauth). Reframed as an abstract position source; the user wants
+  to **discuss the backend next session** (manual file vs email-monitoring vs Schwab API). The
+  email-monitoring idea is parked for that discussion. See `docs/IMPLEMENTATION_PLAN.md`.
+- **Pre-deploy smoke (user will run, on the VPS):** (1) `tests/test_e2e.py <TICKER>` with real keys;
+  (2) `scripts/validate_yfc.py` on a **weekday during US market hours** (#2 intraday-staleness check).
+- Everything except #4 is **deployable now** — Schwab is a safe stub. The original "deploy only after
+  the whole backlog" rule may be relaxed to deploy-now-defer-#4 (user's call).
+
+Keep this block current as work progresses; remove it once #4 lands and the deploy is done.
+
 ## Cross-machine workflow (local + VPS, synced via Git)
 
 This repo is worked on from **two machines** (local + VPS) and kept in sync through Git (`origin/main`).
