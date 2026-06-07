@@ -9,11 +9,13 @@ triggers miss.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from watchy.advisor import get_advice
 from watchy.config import WatchyConfig
 from watchy.indicators import compute_indicators
+from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
 from watchy.orchestrator import AnalystSet, DebateMode, PipelineSpec, RiskMode, run_pipeline
 from watchy.schwab import SchwabClient
@@ -34,6 +36,7 @@ def run_daily_scan(
     notifier: TelegramNotifier,
     *,
     pipeline_runner: Any = None,
+    ticker_locks: TickerLockRegistry | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Run Tier 2 for every ticker on the watchlist.
 
@@ -44,9 +47,13 @@ def run_daily_scan(
 
     logger.info("Tier 2 daily scan starting for %d tickers", len(tickers))
 
-    for ticker in tickers:
+    for i, ticker in enumerate(tickers):
+        if i > 0 and config.tier2_throttle_s > 0:
+            time.sleep(config.tier2_throttle_s)
         try:
-            results[ticker] = _run_ticker(ticker, config, store, notifier, pipeline_runner)
+            results[ticker] = _run_ticker(
+                ticker, config, store, notifier, pipeline_runner, ticker_locks,
+            )
         except Exception as exc:
             logger.exception("Tier 2 failed for %s", ticker)
             notifier.error(f"Tier 2: {ticker}", exc)
@@ -63,6 +70,7 @@ def _run_ticker(
     store: StateStore,
     notifier: TelegramNotifier,
     pipeline_runner: Any = None,
+    ticker_locks: TickerLockRegistry | None = None,
 ) -> dict[str, Any]:
     logger.info("Tier 2: %s", ticker)
 
@@ -78,29 +86,33 @@ def _run_ticker(
             "rsi": bundle.rsi,
         }
 
-    run_id = store.start_run(ticker, "tier2", "scheduled_daily")
+    # Serialize against a concurrent Tier 1 pipeline for the same ticker.
+    from contextlib import nullcontext
+    lock = ticker_locks.get(ticker) if ticker_locks else nullcontext()
 
-    try:
-        result = run_pipeline(ticker, FULL_PIPELINE, runner=pipeline_runner)
-        if stage_context:
-            result.setdefault("stage_context", stage_context)
-        store.complete_run(run_id, success=True, summary=result.get("summary", ""))
-        store.save_ticker_state(ticker, last_full_analysis_ts=_now_iso())
+    with lock:
+        run_id = store.start_run(ticker, "tier2", "scheduled_daily")
+        try:
+            result = run_pipeline(ticker, FULL_PIPELINE, runner=pipeline_runner)
+            if stage_context:
+                result.setdefault("stage_context", stage_context)
+            store.complete_run(run_id, success=True, summary=result.get("summary", ""))
+            store.save_ticker_state(ticker, last_full_analysis_ts=_now_iso())
 
-        # fetch position and synthesize advice
-        schwab = SchwabClient(config.schwab)
-        position_text = schwab.format_position_context(ticker)
-        advice = get_advice(ticker, result, schwab, config)
+            # fetch position and synthesize advice
+            schwab = SchwabClient(config.schwab)
+            position_text = schwab.format_position_context(ticker)
+            advice = get_advice(ticker, result, schwab, config)
 
-        notifier.pipeline_result(
-            ticker, "scheduled_daily", result,
-            position_text=position_text,
-            advice=advice,
-        )
-        return result
-    except Exception as exc:
-        store.complete_run(run_id, success=False, summary=str(exc))
-        raise
+            notifier.pipeline_result(
+                ticker, "scheduled_daily", result,
+                position_text=position_text,
+                advice=advice,
+            )
+            return result
+        except Exception as exc:
+            store.complete_run(run_id, success=False, summary=str(exc))
+            raise
 
 
 def _now_iso() -> str:

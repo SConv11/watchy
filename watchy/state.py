@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,9 @@ class StateStore:
     def __init__(self, db_path: str = DEFAULT_DB_PATH) -> None:
         _ensure_dir(db_path)
         self.db_path = db_path
+        # One connection shared across scheduler threads (check_same_thread=False);
+        # serialize every access with a reentrant lock to avoid "database is locked".
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_schema()
@@ -70,78 +74,85 @@ class StateStore:
     # --- ticker state ---
 
     def get_ticker_state(self, ticker: str) -> dict[str, Any]:
-        row = self._conn.execute(
-            "SELECT * FROM ticker_state WHERE ticker = ?", (ticker.upper(),)
-        ).fetchone()
-        if row is None:
-            return {}
-        cols = [d[0] for d in self._conn.execute(
-            "SELECT * FROM ticker_state LIMIT 0"
-        ).description]
-        return dict(zip(cols, row))
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM ticker_state WHERE ticker = ?", (ticker.upper(),)
+            ).fetchone()
+            if row is None:
+                return {}
+            cols = [d[0] for d in self._conn.execute(
+                "SELECT * FROM ticker_state LIMIT 0"
+            ).description]
+            return dict(zip(cols, row))
 
     def save_ticker_state(self, ticker: str, **kwargs: Any) -> None:
         kwargs.setdefault("updated_ts", _now_iso())
         columns = ", ".join(f"{k} = ?" for k in kwargs)
         vals = list(kwargs.values())
-        self._conn.execute(
-            f"INSERT INTO ticker_state (ticker, {', '.join(kwargs)}) "
-            f"VALUES (?, {', '.join('?' for _ in kwargs)}) "
-            f"ON CONFLICT(ticker) DO UPDATE SET {columns}",
-            [ticker.upper()] + vals + vals,
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                f"INSERT INTO ticker_state (ticker, {', '.join(kwargs)}) "
+                f"VALUES (?, {', '.join('?' for _ in kwargs)}) "
+                f"ON CONFLICT(ticker) DO UPDATE SET {columns}",
+                [ticker.upper()] + vals + vals,
+            )
+            self._conn.commit()
 
     # --- signal cooldown ---
 
     def is_in_cooldown(self, ticker: str, signal_type: str, cooldown_hours: float) -> bool:
         since = (datetime.now(timezone.utc) - timedelta(hours=cooldown_hours)).isoformat()
-        row = self._conn.execute(
-            "SELECT 1 FROM signal_log WHERE ticker = ? AND signal_type = ? "
-            "AND fired_ts > ? LIMIT 1",
-            (ticker.upper(), signal_type, since),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM signal_log WHERE ticker = ? AND signal_type = ? "
+                "AND fired_ts > ? LIMIT 1",
+                (ticker.upper(), signal_type, since),
+            ).fetchone()
         return row is not None
 
     def log_signal(self, ticker: str, signal_type: str, details: dict | None = None) -> None:
-        self._conn.execute(
-            "INSERT INTO signal_log (ticker, signal_type, fired_ts, details) "
-            "VALUES (?, ?, ?, ?)",
-            (
-                ticker.upper(),
-                signal_type,
-                _now_iso(),
-                json.dumps(details) if details else None,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO signal_log (ticker, signal_type, fired_ts, details) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    ticker.upper(),
+                    signal_type,
+                    _now_iso(),
+                    json.dumps(details) if details else None,
+                ),
+            )
+            self._conn.commit()
 
     def mark_notified(self, ticker: str, signal_type: str) -> None:
-        self._conn.execute(
-            "UPDATE signal_log SET notified = 1 "
-            "WHERE ticker = ? AND signal_type = ? AND notified = 0",
-            (ticker.upper(), signal_type),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE signal_log SET notified = 1 "
+                "WHERE ticker = ? AND signal_type = ? AND notified = 0",
+                (ticker.upper(), signal_type),
+            )
+            self._conn.commit()
 
     # --- run history ---
 
     def start_run(self, ticker: str, tier: str, trigger_type: str = "scheduled") -> int:
-        cur = self._conn.execute(
-            "INSERT INTO run_history (ticker, tier, trigger_type, started_ts) "
-            "VALUES (?, ?, ?, ?)",
-            (ticker.upper(), tier, trigger_type, _now_iso()),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO run_history (ticker, tier, trigger_type, started_ts) "
+                "VALUES (?, ?, ?, ?)",
+                (ticker.upper(), tier, trigger_type, _now_iso()),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def complete_run(self, run_id: int, success: bool, summary: str = "") -> None:
-        self._conn.execute(
-            "UPDATE run_history SET completed_ts = ?, success = ?, summary = ? "
-            "WHERE id = ?",
-            (_now_iso(), int(success), summary, run_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE run_history SET completed_ts = ?, success = ?, summary = ? "
+                "WHERE id = ?",
+                (_now_iso(), int(success), summary, run_id),
+            )
+            self._conn.commit()
 
     # --- housekeeping ---
 

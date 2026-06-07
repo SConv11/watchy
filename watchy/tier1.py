@@ -12,6 +12,7 @@ from typing import Any
 from watchy.advisor import get_advice
 from watchy.config import WatchyConfig
 from watchy.indicators import IndicatorBundle, compute_indicators, detect_signals
+from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
 from watchy.orchestrator import (
     PipelineSpec,
@@ -32,6 +33,7 @@ def scan_ticker(
     notifier: TelegramNotifier,
     *,
     pipeline_runner: Any = None,
+    ticker_locks: TickerLockRegistry | None = None,
 ) -> list[str]:
     """Run Tier 1 scan for a single ticker.
 
@@ -61,14 +63,22 @@ def scan_ticker(
         logger.info("Tier 1 scan complete: %s — no actionable signals", ticker)
         return []
 
-    # process each actionable signal
-    for sig in actionable:
-        spec = get_pipeline(sig)
-        _handle_signal(ticker, sig, spec, bundle, config, store, notifier, pipeline_runner)
+    # Serialize the pipeline for this ticker so a concurrent Tier 2 run for the
+    # same symbol doesn't double-spend the analyst budget or interleave state.
+    lock = ticker_locks.get(ticker) if ticker_locks else _nullcontext()
+    with lock:
+        for sig in actionable:
+            spec = get_pipeline(sig)
+            _handle_signal(ticker, sig, spec, bundle, config, store, notifier, pipeline_runner)
 
     _update_state(store, bundle, ticker)
     logger.info("Tier 1 scan complete: %s — signals: %s", ticker, actionable)
     return actionable
+
+
+def _nullcontext():
+    from contextlib import nullcontext
+    return nullcontext()
 
 
 def _handle_signal(

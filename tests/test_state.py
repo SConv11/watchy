@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 
 import pytest
 
@@ -63,6 +64,36 @@ class TestSignalLog:
     def test_different_tickers_are_independent(self, store):
         store.log_signal("NVDA", "rsi_oversold")
         assert store.is_in_cooldown("TSLA", "rsi_oversold", 12.0) is False
+
+
+class TestConcurrency:
+    def test_concurrent_writes_no_lock_error(self, store):
+        """Many threads writing the shared connection must not raise
+        'database is locked' — the RLock serializes access (#9)."""
+        errors: list[Exception] = []
+        barrier = threading.Barrier(16)
+
+        def worker(n: int):
+            try:
+                barrier.wait()
+                for i in range(20):
+                    store.save_ticker_state(f"T{n}", prev_rsi=float(i))
+                    store.log_signal(f"T{n}", "rsi_oversold")
+                    store.is_in_cooldown(f"T{n}", "rsi_oversold", 1.0)
+                    rid = store.start_run(f"T{n}", "tier1")
+                    store.complete_run(rid, success=True)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(n,)) for n in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        # final write of each ticker landed
+        assert store.get_ticker_state("T0")["prev_rsi"] == 19.0
 
 
 class TestRunHistory:

@@ -69,6 +69,9 @@ class WatchyConfig:
     schwab: SchwabConfig = field(default_factory=SchwabConfig)
     log_level: str = "INFO"
     log_file: str = "~/watchy/watchy.log"
+    # Seconds to sleep between tickers in a Tier 2 daily scan, to avoid a
+    # burst of yfinance requests tripping rate limits (#1).
+    tier2_throttle_s: float = 2.0
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> WatchyConfig:
@@ -93,6 +96,7 @@ class WatchyConfig:
             schwab=SchwabConfig(**raw.get("schwab", {})),
             log_level=raw.get("log_level", "INFO"),
             log_file=raw.get("log_file", "~/watchy/watchy.log"),
+            tier2_throttle_s=raw.get("tier2_throttle_s", 2.0),
         )
 
 

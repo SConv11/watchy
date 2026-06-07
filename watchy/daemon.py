@@ -15,12 +15,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from watchy import __version__
 from watchy.config import WatchyConfig, load_config
+from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
 from watchy.state import StateStore
 from watchy.pipeline_runner import create_tradingagents_runner
@@ -57,18 +59,36 @@ def build_scheduler(
     notifier: TelegramNotifier,
     *,
     pipeline_runner: Any = None,
+    ticker_locks: TickerLockRegistry | None = None,
 ) -> BackgroundScheduler:
-    scheduler = BackgroundScheduler(timezone="UTC")
+    if ticker_locks is None:
+        ticker_locks = TickerLockRegistry()
 
-    # Tier 1: per-ticker hourly scans
-    for tc in config.watchlist:
+    # Size the pool so every ticker can run concurrently without queuing.
+    max_workers = max(10, len(config.watchlist) + 4)
+    scheduler = BackgroundScheduler(
+        timezone="UTC",
+        executors={"default": ThreadPoolExecutor(max_workers=max_workers)},
+    )
+
+    from datetime import datetime, timedelta, timezone as _tz
+    base = datetime.now(_tz.utc) + timedelta(seconds=10)
+
+    # Tier 1: per-ticker hourly scans. Stagger first-fire by ticker index and add
+    # jitter so 16 tickers don't stampede yfinance in the same second.
+    for idx, tc in enumerate(config.watchlist):
         scheduler.add_job(
             _tier1_job,
-            trigger=IntervalTrigger(hours=tc.tier1_interval_h),
-            args=[tc.ticker, config, store, notifier, pipeline_runner],
+            trigger=IntervalTrigger(
+                hours=tc.tier1_interval_h,
+                jitter=300,
+                start_date=base + timedelta(seconds=idx * 7),
+            ),
+            args=[tc.ticker, config, store, notifier, pipeline_runner, ticker_locks],
             id=f"tier1_{tc.ticker}",
             name=f"Tier 1 — {tc.ticker}",
             replace_existing=True,
+            misfire_grace_time=120,
         )
 
     # Tier 2: one job per unique UTC time (processes all tickers in that slot)
@@ -81,10 +101,11 @@ def build_scheduler(
         scheduler.add_job(
             _tier2_job,
             trigger=CronTrigger(hour=int(hour), minute=int(minute)),
-            args=[config, store, notifier, pipeline_runner],
+            args=[config, store, notifier, pipeline_runner, ticker_locks],
             id=f"tier2_{tc.tier2_time_utc.replace(':', '')}",
             name=f"Tier 2 — {tc.tier2_time_utc} UTC",
             replace_existing=True,
+            misfire_grace_time=120,
         )
 
     return scheduler
@@ -96,11 +117,13 @@ def _tier1_job(
     store: StateStore,
     notifier: TelegramNotifier,
     pipeline_runner: Any = None,
+    ticker_locks: TickerLockRegistry | None = None,
 ) -> None:
     logger = logging.getLogger("watchy.daemon")
     try:
         fired = scan_ticker(
-            ticker, config, store, notifier, pipeline_runner=pipeline_runner,
+            ticker, config, store, notifier,
+            pipeline_runner=pipeline_runner, ticker_locks=ticker_locks,
         )
         if fired:
             logger.info("Tier 1 %s: fired %s", ticker, fired)
@@ -114,10 +137,14 @@ def _tier2_job(
     store: StateStore,
     notifier: TelegramNotifier,
     pipeline_runner: Any = None,
+    ticker_locks: TickerLockRegistry | None = None,
 ) -> None:
     logger = logging.getLogger("watchy.daemon")
     try:
-        run_daily_scan(config, store, notifier, pipeline_runner=pipeline_runner)
+        run_daily_scan(
+            config, store, notifier,
+            pipeline_runner=pipeline_runner, ticker_locks=ticker_locks,
+        )
     except Exception:
         logger.exception("Tier 2 job failed")
         notifier.error("Tier 2 job", sys.exc_info()[1])
@@ -133,6 +160,7 @@ def main(config_path: str | None = None) -> None:
 
     store = StateStore()
     notifier = TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id)
+    ticker_locks = TickerLockRegistry()
 
     # Wire the real TradingAgents pipeline runner (DeepSeek by default).
     # API key from secrets.yaml, injected as env var before TA imports.
@@ -141,7 +169,8 @@ def main(config_path: str | None = None) -> None:
     )
 
     scheduler = build_scheduler(
-        config, store, notifier, pipeline_runner=pipeline_runner,
+        config, store, notifier,
+        pipeline_runner=pipeline_runner, ticker_locks=ticker_locks,
     )
 
     def _shutdown(signum, frame):
