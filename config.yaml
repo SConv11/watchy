@@ -28,6 +28,10 @@ watchlist:
   # - ticker: "NVDA"
   #   tier1_interval_h: 2
   #   tier2_time_utc: "14:30"
+  #   # Optional: only run Tier 1 when price is within N% of a target level.
+  #   # Both keys required to enable; omit them to scan regardless of price.
+  #   target_price: 180.0
+  #   tier1_min_price_proximity_pct: 5.0
 
 # Thresholds & cooldowns below are OPTIONAL — defaults are in code.
 # Uncomment any section to override.

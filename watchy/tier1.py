@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from watchy.advisor import get_advice
-from watchy.config import WatchyConfig
+from watchy.config import TickerConfig, WatchyConfig
 from watchy.indicators import (
     IndicatorBundle,
     compute_indicators,
@@ -51,6 +51,17 @@ def scan_ticker(
         logger.warning("Skipping %s — no indicator data", ticker)
         return []
 
+    # Per-ticker price-proximity skip (#5): when a target price + proximity are
+    # configured, skip tickers trading far from the level the user cares about.
+    tc = config.get_ticker_config(ticker)
+    if _is_outside_proximity(bundle.current_price, tc):
+        logger.info(
+            "Tier 1 skip %s — price %.2f outside %.2f%% of target %.2f",
+            ticker, bundle.current_price,
+            tc.tier1_min_price_proximity_pct, tc.target_price,
+        )
+        return []
+
     prev = store.get_ticker_state(ticker)
     fired_signals = detect_signals(bundle, prev)
 
@@ -84,6 +95,20 @@ def scan_ticker(
 def _nullcontext():
     from contextlib import nullcontext
     return nullcontext()
+
+
+def _is_outside_proximity(price: float | None, tc: TickerConfig | None) -> bool:
+    """True if a target/proximity is configured and price is too far from target.
+
+    Returns False (never skip) when the feature isn't configured for this ticker,
+    when there's no price, or on a non-positive target.
+    """
+    if tc is None or tc.target_price is None or tc.tier1_min_price_proximity_pct is None:
+        return False
+    if not price or tc.target_price <= 0:
+        return False
+    distance_pct = abs(price - tc.target_price) / tc.target_price * 100
+    return distance_pct > tc.tier1_min_price_proximity_pct
 
 
 def _handle_signal(

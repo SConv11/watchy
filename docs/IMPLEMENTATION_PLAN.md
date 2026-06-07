@@ -181,7 +181,16 @@ run `tests/test_e2e.py` on one ticker before considering deploy.
   if extractable from `final_state`; confirm `report_path` is always set.
 - **`tests/test_notify.py`** → expanded fields present; still chunk-safe.
 
-### #5 — Per-ticker Tier 1 price-proximity skip
+### #5 — Per-ticker Tier 1 price-proximity skip ✅ DONE
+- **`watchy/config.py`** → `TickerConfig` gains `target_price` + `tier1_min_price_proximity_pct`
+  (both optional); `WatchyConfig.get_ticker_config(ticker)` added.
+- **`watchy/tier1.py`** → `_is_outside_proximity(price, tc)` helper; `scan_ticker` skips (log INFO,
+  return `[]`) after `compute_indicators` when configured and price is too far. Unconfigured/partial
+  config/no-price never skip.
+- **`tests/test_tier1.py`** → helper cases + scan integration (far→skip before state read, near→scan,
+  unconfigured→scan). README + config.yaml document the keys.
+
+#### original plan
 - **`watchy/config.py`** → `TickerConfig`: add `target_price: float | None = None`,
   `tier1_min_price_proximity_pct: float | None = None`; add `WatchyConfig.get_ticker_config(ticker)`.
 - **`watchy/tier1.py`** → `scan_ticker`: after `compute_indicators`, skip when

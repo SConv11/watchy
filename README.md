@@ -84,7 +84,7 @@ journalctl -u watchy -f  # 查看日志
 
 | 配置项 | 用途 |
 |--------|------|
-| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔和 Tier 2 UTC 时间 |
+| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间，以及可选的价格邻近过滤（`target_price` + `tier1_min_price_proximity_pct`：仅当现价在目标价 N% 以内才扫该票） |
 | `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
 | `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
 | `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |

@@ -15,6 +15,11 @@ class TickerConfig:
     ticker: str
     tier1_interval_h: float = 0.5
     tier2_time_utc: str = "11:30"
+    # Optional per-ticker Tier 1 price-proximity skip (#5). When both are set,
+    # Tier 1 skips the scan unless the current price is within
+    # tier1_min_price_proximity_pct percent of target_price.
+    target_price: float | None = None
+    tier1_min_price_proximity_pct: float | None = None
 
 
 @dataclass
@@ -72,6 +77,14 @@ class WatchyConfig:
     # Seconds to sleep between tickers in a Tier 2 daily scan, to avoid a
     # burst of yfinance requests tripping rate limits (#1).
     tier2_throttle_s: float = 2.0
+
+    def get_ticker_config(self, ticker: str) -> TickerConfig | None:
+        """Return the TickerConfig for a symbol (case-insensitive), or None."""
+        t = ticker.upper()
+        for tc in self.watchlist:
+            if tc.ticker.upper() == t:
+                return tc
+        return None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> WatchyConfig:
