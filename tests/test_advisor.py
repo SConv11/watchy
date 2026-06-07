@@ -2,7 +2,26 @@
 
 import pytest
 
-from watchy.advisor import _format_analysis, _parse_advice
+from watchy.advisor import _effective_key, _format_analysis, _parse_advice
+from watchy.config import LLMConfig
+
+
+class TestEffectiveKey:
+    def test_deepseek_uses_deepseek_key(self):
+        llm = LLMConfig(provider="deepseek", deepseek_api_key="ds-secret", api_key="")
+        assert _effective_key(llm) == "ds-secret"
+
+    def test_deepseek_falls_back_to_api_key(self):
+        llm = LLMConfig(provider="deepseek", deepseek_api_key="", api_key="generic")
+        assert _effective_key(llm) == "generic"
+
+    def test_anthropic_uses_api_key(self):
+        llm = LLMConfig(provider="anthropic", api_key="sk-ant", deepseek_api_key="ignored")
+        assert _effective_key(llm) == "sk-ant"
+
+    def test_both_empty_returns_empty(self):
+        llm = LLMConfig(provider="deepseek", deepseek_api_key="", api_key="")
+        assert _effective_key(llm) == ""
 
 
 class TestParseAdvice:

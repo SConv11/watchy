@@ -152,8 +152,11 @@ def detect_signals(
             bundle.sma_200_1m_ago is not None
             and sma200 > bundle.sma_200_1m_ago
         )
+        # State is read back from SQLite as int (0/1), so compare by value,
+        # not identity. `None` (no prior state) stays inert: a new ticker's
+        # first scan never false-fires a cross.
         if (
-            prev_above is False
+            prev_above == 0
             and now_above
             and staircase
             and sma200_rising
@@ -161,7 +164,7 @@ def detect_signals(
             signals.append("golden_cross")
 
         # --- Death Cross: 50 SMA crosses below 200 SMA ---
-        if prev_above is True and not now_above:
+        if prev_above == 1 and not now_above:
             signals.append("death_cross")
 
     # --- RSI extreme ---
@@ -179,9 +182,9 @@ def detect_signals(
     if macd is not None and macd_sig is not None:
         prev_above = prev_state.get("prev_macd_above_signal")
         now_above = macd > macd_sig
-        if prev_above is False and now_above:
+        if prev_above == 0 and now_above:
             signals.append("macd_bullish_cross")
-        elif prev_above is True and not now_above:
+        elif prev_above == 1 and not now_above:
             signals.append("macd_bearish_cross")
 
     # --- Bollinger Band breach ---

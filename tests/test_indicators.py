@@ -198,7 +198,7 @@ class TestDetectSignals:
         bundle.macd = 0.5
         bundle.macd_signal = 0.3
 
-        signals = detect_signals(bundle, {"prev_macd_above_signal": False})
+        signals = detect_signals(bundle, {"prev_macd_above_signal": 0})
         assert "macd_bullish_cross" in signals
 
     def test_golden_cross_requires_staircase(self):
@@ -215,7 +215,7 @@ class TestDetectSignals:
         bundle.sma_200 = 100.0
         bundle.sma_200_1m_ago = 98.0  # 200MA rising
 
-        signals = detect_signals(bundle, {"prev_sma_50_above_200": False})
+        signals = detect_signals(bundle, {"prev_sma_50_above_200": 0})
         assert "golden_cross" in signals
 
     def test_death_cross(self):
@@ -228,8 +228,87 @@ class TestDetectSignals:
         bundle.sma_50 = 95.0
         bundle.sma_200 = 100.0
 
-        signals = detect_signals(bundle, {"prev_sma_50_above_200": True})
+        signals = detect_signals(bundle, {"prev_sma_50_above_200": 1})
         assert "death_cross" in signals
+
+
+# ---------------------------------------------------------------------------
+# Regression: crossover detection through a real SQLite round-trip (#13)
+# ---------------------------------------------------------------------------
+
+class TestCrossoverStateRoundTrip:
+    """The bug: prev-state ints from SQLite were compared with `is False`/`is True`,
+    which is always False in CPython — so crossovers never fired in production.
+    Synthetic tests passed Python bools, which hid it. These tests persist real
+    state and read it back so the round-trip int is what detect_signals sees.
+    """
+
+    def _store(self, tmp_path):
+        from watchy.state import StateStore
+        return StateStore(str(tmp_path / "state.db"))
+
+    def test_golden_cross_fires_after_state_roundtrip(self, tmp_path):
+        store = self._store(tmp_path)
+        store.save_ticker_state("TEST", prev_sma_50_above_200=0)
+        prev = store.get_ticker_state("TEST")
+        assert prev["prev_sma_50_above_200"] == 0  # read back as int, not bool
+
+        bundle = IndicatorBundle(ticker="TEST")
+        bundle.current_price = 110.0
+        bundle.sma_50 = 105.0
+        bundle.sma_150 = 102.0
+        bundle.sma_200 = 100.0
+        bundle.sma_200_1m_ago = 98.0
+
+        assert "golden_cross" in detect_signals(bundle, prev)
+        store.close()
+
+    def test_death_cross_fires_after_state_roundtrip(self, tmp_path):
+        store = self._store(tmp_path)
+        store.save_ticker_state("TEST", prev_sma_50_above_200=1)
+        prev = store.get_ticker_state("TEST")
+        assert prev["prev_sma_50_above_200"] == 1
+
+        bundle = IndicatorBundle(ticker="TEST")
+        bundle.current_price = 90.0
+        bundle.sma_50 = 95.0
+        bundle.sma_150 = 97.0
+        bundle.sma_200 = 100.0
+
+        assert "death_cross" in detect_signals(bundle, prev)
+        store.close()
+
+    def test_macd_bullish_cross_fires_after_state_roundtrip(self, tmp_path):
+        store = self._store(tmp_path)
+        store.save_ticker_state("TEST", prev_macd_above_signal=0)
+        prev = store.get_ticker_state("TEST")
+        assert prev["prev_macd_above_signal"] == 0
+
+        bundle = IndicatorBundle(ticker="TEST")
+        bundle.current_price = 100.0
+        bundle.macd = 0.5
+        bundle.macd_signal = 0.3
+
+        assert "macd_bullish_cross" in detect_signals(bundle, prev)
+        store.close()
+
+    def test_no_false_fire_on_first_scan_none_state(self, tmp_path):
+        """A brand-new ticker (no saved state → None) must not fire a cross."""
+        store = self._store(tmp_path)
+        prev = store.get_ticker_state("NEW")  # {} → .get returns None
+        assert prev == {}
+
+        bundle = IndicatorBundle(ticker="NEW")
+        bundle.current_price = 110.0
+        bundle.sma_50 = 105.0
+        bundle.sma_150 = 102.0
+        bundle.sma_200 = 100.0
+        bundle.sma_200_1m_ago = 98.0
+
+        signals = detect_signals(bundle, prev)
+        assert "golden_cross" not in signals
+        assert "death_cross" not in signals
+        store.close()
 
 
 # ---------------------------------------------------------------------------

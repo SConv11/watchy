@@ -14,6 +14,64 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
+# Telegram rejects messages over 4096 chars. Keep a margin below the hard cap.
+TELEGRAM_MAX = 4096
+_WORKING_LIMIT = 4000
+
+
+def _split_message(text: str, limit: int = _WORKING_LIMIT) -> list[str]:
+    """Split a message into Telegram-sized chunks without breaking HTML tags.
+
+    Splits on newline boundaries: each source line carries balanced HTML tags
+    (open+close on the same line), so accumulating whole lines preserves tag
+    integrity. A single line longer than *limit* (e.g. the advisor detail
+    paragraph — plain escaped text, no tags) is hard-split on whitespace.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        if len(line) > limit:
+            # flush whatever's accumulated, then hard-split the oversized line
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(_hard_split(line, limit))
+            continue
+        candidate = line if not current else current + "\n" + line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _hard_split(line: str, limit: int) -> list[str]:
+    """Split a single long line on whitespace, falling back to a hard cut."""
+    chunks: list[str] = []
+    current = ""
+    for word in line.split(" "):
+        candidate = word if not current else current + " " + word
+        if len(candidate) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            # a single word longer than the limit — cut it
+            while len(word) > limit:
+                chunks.append(word[:limit])
+                word = word[limit:]
+            current = word
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
 
 class TelegramNotifier:
     def __init__(self, bot_token: str, chat_id: str) -> None:
@@ -24,11 +82,15 @@ class TelegramNotifier:
             logger.warning("Telegram not configured — notifications disabled")
 
     def send(self, message: str) -> bool:
-        """Send a plain text message. Returns True on success."""
+        """Send a message, splitting into ≤4096-char chunks. Returns True if all sent."""
         if not self._enabled:
             logger.info("[telegram would send]: %s", message)
             return False
-        return self._post("sendMessage", {"text": message, "parse_mode": "HTML"})
+        chunks = _split_message(message)
+        return all(
+            self._post("sendMessage", {"text": chunk, "parse_mode": "HTML"})
+            for chunk in chunks
+        )
 
     def _escape_html(self, text: str) -> str:
         """Escape HTML special characters so Telegram parse_mode=HTML doesn't choke."""

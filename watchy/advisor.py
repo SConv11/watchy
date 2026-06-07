@@ -67,8 +67,9 @@ def get_advice(
     Returns None if no LLM key is configured or the call fails.
     """
     llm = config.llm
-    if not llm.api_key:
-        logger.info("No LLM API key configured — skipping advisor synthesis")
+    if not _effective_key(llm):
+        field = "deepseek_api_key/api_key" if llm.provider == "deepseek" else "api_key"
+        logger.info("No LLM %s configured — skipping advisor synthesis", field)
         return None
 
     position_text = schwab.format_position_context(ticker) or "No position held."
@@ -201,6 +202,17 @@ def _format_analysis(result: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _effective_key(llm: LLMConfig) -> str:
+    """Resolve the API key for the configured provider.
+
+    DeepSeek keys live in `deepseek_api_key` (so an Anthropic/OpenAI key can
+    coexist in `api_key`); fall back to `api_key` if that field is empty.
+    """
+    if llm.provider == "deepseek":
+        return llm.deepseek_api_key or llm.api_key
+    return llm.api_key
+
+
 def _call_anthropic(prompt: str, llm: LLMConfig) -> str:
     """Call Anthropic Messages API for advice synthesis."""
     import urllib.request
@@ -220,7 +232,7 @@ def _call_anthropic(prompt: str, llm: LLMConfig) -> str:
         data=body,
         headers={
             "Content-Type": "application/json",
-            "x-api-key": llm.api_key,
+            "x-api-key": _effective_key(llm),
             "anthropic-version": "2023-06-01",
         },
     )
@@ -251,7 +263,7 @@ def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
         data=body,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {llm.api_key}",
+            "Authorization": f"Bearer {_effective_key(llm)}",
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -268,7 +280,7 @@ def _call_gemini(prompt: str, llm: LLMConfig) -> str:
     import urllib.request
 
     model = llm.model or "gemini-2.5-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={llm.api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_effective_key(llm)}"
 
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
