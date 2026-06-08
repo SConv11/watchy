@@ -49,6 +49,7 @@ Schwab API (live)  →  on-disk cached last-good snapshot (flagged stale)  →  
   (labelled with its age) when the live fetch fails — stale-but-real data survives token lapses.
 - **`FilePositionSource`** reads `~/watchy_config/positions.yaml` (schema in `positions.example.yaml`)
   as the final backstop; enriches with live yfinance prices to derive market value / unrealized P&L.
+  Also age-labelled: `as_of()` prefers an explicit `as_of:` field, else the file's mtime.
 - **`RobustPositionSource`** memoizes one snapshot per scan and appends provenance (`source: …`) so
   stale/fallback data is never presented as live. Wired into advisor, tier1, tier2, and the e2e test.
 - Tests: `tests/test_positions.py` (19) — parsing, enrichment, cache round-trip, full fallback chain.

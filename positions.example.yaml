@@ -8,6 +8,11 @@
 # Update it whenever your holdings change. Never commit it (it lives outside the
 # repo, in ~/watchy_config/, alongside secrets.yaml).
 
+# Optional: when these holdings were accurate. Used to label staleness in the
+# advice (e.g. "manual file, as of 2026-06-05 ... (3d old)"). If omitted, the
+# file's modification time is used instead. Accepts a date or ISO datetime.
+# as_of: 2026-06-05
+
 positions:
   - ticker: NVDA
     quantity: 100

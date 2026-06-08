@@ -120,6 +120,37 @@ positions:
         assert pos.unrealized_pnl == 1000.0
         assert pos.unrealized_pnl_pct == pytest.approx(8.333, abs=1e-2)
 
+    def test_as_of_prefers_explicit_field(self, tmp_path):
+        path = _write_positions(tmp_path, """
+as_of: 2026-06-05
+positions:
+  - ticker: NVDA
+    quantity: 10
+    average_cost: 100.0
+""")
+        src = FilePositionSource(path, enrich=False)
+        ts = src.as_of()
+        assert ts is not None
+        assert (ts.year, ts.month, ts.day) == (2026, 6, 5)
+        assert ts.tzinfo is not None  # coerced to tz-aware UTC
+
+    def test_as_of_falls_back_to_mtime(self, tmp_path):
+        path = _write_positions(tmp_path, """
+positions:
+  - ticker: NVDA
+    quantity: 10
+    average_cost: 100.0
+""")
+        src = FilePositionSource(path, enrich=False)
+        ts = src.as_of()
+        assert ts is not None
+        # mtime ~ now; should be very recent and tz-aware.
+        age = (datetime.now(timezone.utc) - ts).total_seconds()
+        assert 0 <= age < 60
+
+    def test_as_of_none_when_missing_file(self, tmp_path):
+        assert FilePositionSource(str(tmp_path / "nope.yaml")).as_of() is None
+
     def test_account_summary_totals_market_value(self, tmp_path, monkeypatch):
         path = _write_positions(tmp_path, """
 positions:
@@ -230,7 +261,26 @@ positions:
         )
         summary = src.get_account_summary()
         assert summary.account_id == "manual"
-        assert "manual file" in src.format_position_context("NVDA")
+        ctx = src.format_position_context("NVDA")
+        assert "manual file" in ctx
+        assert "old)" in ctx  # staleness age appended (from file mtime)
+
+    def test_file_fallback_uses_explicit_as_of(self, tmp_path):
+        path = _write_positions(tmp_path, """
+as_of: 2026-06-05
+positions:
+  - ticker: NVDA
+    quantity: 10
+    average_cost: 90.0
+    current_price: 100.0
+""")
+        src = RobustPositionSource(
+            live=_FakeLive(summary=None),
+            cache=PositionCache(str(tmp_path / "absent.json")),
+            file_source=FilePositionSource(path, enrich=False),
+        )
+        ctx = src.format_position_context("NVDA")
+        assert "manual file, as of 2026-06-05" in ctx
 
     def test_returns_none_when_everything_empty(self, tmp_path):
         src = RobustPositionSource(

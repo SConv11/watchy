@@ -22,7 +22,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -232,6 +232,28 @@ class FilePositionSource(PositionSource):
             pos.current_price = _latest_price(pos.ticker)
         _derive_pnl(pos)
 
+    def as_of(self) -> datetime | None:
+        """When the manual data is current 'as of', for staleness labelling.
+
+        Prefers an explicit top-level ``as_of:`` field in the file (the user's
+        own statement of when the holdings were accurate); otherwise falls back
+        to the file's modification time (zero-upkeep default). None if no file.
+        """
+        if not self.path.exists():
+            return None
+        try:
+            with open(self.path) as f:
+                raw = yaml.safe_load(f) or {}
+            explicit = _parse_as_of(raw.get("as_of"))
+            if explicit is not None:
+                return explicit
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to read as_of from %s", self.path)
+        try:
+            return datetime.fromtimestamp(self.path.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            return None
+
     def get_position(self, ticker: str) -> Position | None:
         pos = self._load_raw().get(ticker.upper())
         if pos is None:
@@ -293,6 +315,26 @@ class PositionCache:
         except Exception:  # noqa: BLE001
             logger.exception("Failed to read position cache %s", self.path)
             return None
+
+
+def _parse_as_of(val: Any) -> datetime | None:
+    """Coerce a YAML ``as_of`` value (datetime / date / ISO string) to UTC datetime."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        dt = val
+    elif isinstance(val, date):
+        dt = datetime(val.year, val.month, val.day)
+    elif isinstance(val, str):
+        try:
+            dt = datetime.fromisoformat(val)
+        except ValueError:
+            logger.warning("Unparseable as_of value: %r", val)
+            return None
+    else:
+        logger.warning("Unsupported as_of type: %r", val)
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def _format_age(fetched_at: datetime, now: datetime | None = None) -> str:
@@ -359,10 +401,15 @@ class RobustPositionSource(PositionSource):
             self._snap = _Snapshot(summary, prov)
             return self._snap
 
-        # 3. Manual file — final backstop.
+        # 3. Manual file — final backstop (labelled with its age too).
         summary = self.file.get_account_summary()
         if summary is not None:
-            self._snap = _Snapshot(summary, "manual file")
+            as_of = self.file.as_of()
+            if as_of is not None:
+                prov = f"manual file, as of {as_of:%Y-%m-%d %H:%M} UTC ({_format_age(as_of)})"
+            else:
+                prov = "manual file"
+            self._snap = _Snapshot(summary, prov)
             return self._snap
 
         self._snap = _Snapshot(None, None)

@@ -42,7 +42,7 @@
 
 1. **Schwab API（实时）** —— 主数据源。每次成功获取后，快照（snapshot）会缓存到 `~/watchy_config/positions_cache.json`。
 2. **缓存快照（cached snapshot）** —— 当实时获取失败（token 过期需 7 天重新授权、API 故障、网络中断）时，回退到上次成功的快照，并在推送中标注数据时效（如 `Schwab cache, ... (3d 4h old)`），绝不把陈旧数据当成实时。
-3. **手动文件（manual file）** —— 最终兜底：`~/watchy_config/positions.yaml`（schema 见 `positions.example.yaml`）。用于 Schwab 首次授权前的引导，或彻底无可用数据时。手动文件的持仓会用 yfinance 实时价格补全市值与浮动盈亏（unrealized P&L）。
+3. **手动文件（manual file）** —— 最终兜底：`~/watchy_config/positions.yaml`（schema 见 `positions.example.yaml`）。用于 Schwab 首次授权前的引导，或彻底无可用数据时。手动文件的持仓会用 yfinance 实时价格补全市值与浮动盈亏（unrealized P&L），**同样标注时效**——优先读文件里可选的 `as_of:` 字段（你声明的持仓截至日期），否则退回文件修改时间（mtime）。
 
 > Schwab 的实时 API 调用目前是桩代码（stub）—— 缓存、回退、时效标注、测试已全部就绪；接上真实 OAuth 后，外层逻辑无需改动。
 
