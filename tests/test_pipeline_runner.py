@@ -15,8 +15,57 @@ from watchy.pipeline_runner import (
     _map_debate,
     _map_risk,
     _save_report,
+    _strip_preamble,
     DEFAULT_REPORTS_DIR,
 )
+
+
+class TestStripPreamble:
+    def test_strips_conversational_lead_in_before_rule(self):
+        text = (
+            "Excellent, I now have comprehensive data. Let me compile the full report.\n"
+            "\n---\n# GOOG Technical Analysis\nBody line."
+        )
+        out = _strip_preamble(text)
+        assert out.startswith("# GOOG Technical Analysis")
+        assert "Let me compile" not in out
+
+    def test_strips_lead_in_before_heading_without_rule(self):
+        text = "Now I have all the data. Let me compile.\n\n# Fundamentals\nBody."
+        out = _strip_preamble(text)
+        assert out.startswith("# Fundamentals")
+
+    def test_keeps_content_that_starts_with_heading(self):
+        text = "# Already Clean\nBody."
+        assert _strip_preamble(text) == "# Already Clean\nBody."
+
+    def test_no_marker_returns_stripped_original(self):
+        text = "  just a plain paragraph with no markdown markers  "
+        assert _strip_preamble(text) == "just a plain paragraph with no markdown markers"
+
+    def test_recommendation_snippet_is_clean(self):
+        final_state = {
+            "market_report": (
+                "Excellent, I now have comprehensive data. Let me compile the full "
+                "report.\n\n---\n# GOOG Market Report\nRSI is 55."
+            ),
+        }
+        result = _format_result(
+            _spec_ticker(), _daily_spec(), ["market"], final_state, "BUY",
+        )
+        rec = result["recommendations"][0]
+        assert rec.startswith("[Market] # GOOG Market Report")
+        assert "Let me compile" not in rec
+
+
+def _daily_spec():
+    return PipelineSpec(
+        analysts=AnalystSet.FULL, debate=DebateMode.BULL_BEAR, risk=RiskMode.SIMPLIFIED,
+    )
+
+
+def _spec_ticker():
+    return "GOOG"
 
 
 class TestExtractVerdict:

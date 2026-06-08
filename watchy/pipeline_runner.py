@@ -278,6 +278,26 @@ def _save_report(
 # ---------------------------------------------------------------------------
 
 
+def _strip_preamble(content: str) -> str:
+    """Drop an analyst report's conversational lead-in before its markdown body.
+
+    TA analyst outputs frequently begin with a chatty preamble — e.g.
+    "Excellent, I now have comprehensive data. Let me compile the full report." —
+    followed by a ``---`` rule and/or a ``#`` heading. Start the snippet at the
+    first such structural marker (skipping a leading rule); if none appears in the
+    first several lines, return the content stripped unchanged.
+    """
+    lines = content.lstrip().splitlines()
+    for i, line in enumerate(lines[:8]):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return "\n".join(lines[i:]).lstrip()
+        if stripped.startswith("---"):
+            # Skip the rule itself; the real content follows it.
+            return "\n".join(lines[i + 1:]).lstrip()
+    return content.strip()
+
+
 def _format_result(
     ticker: str,
     spec: PipelineSpec,
@@ -294,7 +314,10 @@ def _format_result(
         "fundamentals_report": final_state.get("fundamentals_report"),
     }
 
-    # Collect non-empty analyst reports as recommendations.
+    # Collect non-empty analyst reports as recommendations. Strip the LLM's
+    # conversational lead-in first (reports often open with "Excellent, I now
+    # have comprehensive data. Let me compile the full report." before the actual
+    # markdown) so the snippet starts at real content, not filler.
     recommendations: list[str] = []
     for key, label in [
         ("market_report", "Market"),
@@ -304,8 +327,8 @@ def _format_result(
     ]:
         content = reports.get(key)
         if content:
-            # Truncate very long reports for the summary.
-            short = content if len(content) <= 300 else content[:297] + "..."
+            cleaned = _strip_preamble(content)
+            short = cleaned if len(cleaned) <= 300 else cleaned[:297] + "..."
             recommendations.append(f"[{label}] {short}")
 
     # Extract final decision text.
