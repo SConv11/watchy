@@ -14,7 +14,7 @@ watchlist:
   - "NVT"
   - "VST"
   - "AAPL"
-  - "TSLA"
+  # - "TSLA"
   - "MOD"
   - "VRT"
   - "SMCI"
@@ -23,6 +23,8 @@ watchlist:
   - "APH"
   - "HUBB"
   - "SOXX"
+  - "PLTR"
+  - "NVDA"
   # Short form uses defaults: scan every 30min, daily at 11:30 UTC.
   # For per-ticker overrides, use the long form:
   # - ticker: "NVDA"
