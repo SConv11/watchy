@@ -1,5 +1,6 @@
 """Tests for notify: Telegram message splitting and chunked send (#11)."""
 
+import json
 from unittest.mock import patch
 
 from watchy.notify import (
@@ -7,6 +8,42 @@ from watchy.notify import (
     _WORKING_LIMIT,
     _split_message,
 )
+
+
+class _FakeResp:
+    def __init__(self, payload=b'{"ok": true}'):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._payload
+
+
+class TestPostPayload:
+    """The real _post must include chat_id — sendMessage 400s without it."""
+
+    def test_post_includes_chat_id(self):
+        notifier = TelegramNotifier(bot_token="tok", chat_id="999")
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["url"] = req.full_url
+            captured["data"] = json.loads(req.data)
+            return _FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            ok = notifier._post("sendMessage", {"text": "hi", "parse_mode": "HTML"})
+
+        assert ok is True
+        assert captured["data"]["chat_id"] == "999"
+        assert captured["data"]["text"] == "hi"
+        assert captured["data"]["parse_mode"] == "HTML"
+        assert "bottok/sendMessage" in captured["url"]
 
 
 class TestSplitMessage:

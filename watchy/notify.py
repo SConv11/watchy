@@ -225,22 +225,37 @@ class TelegramNotifier:
         )
 
     def _post(self, method: str, payload: dict[str, Any]) -> bool:
-        try:
-            import urllib.request
-            import json
+        import json
+        import urllib.error
+        import urllib.request
 
-            url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
-            data = json.dumps(payload).encode()
-            req = urllib.request.Request(
-                url, data=data,
-                headers={"Content-Type": "application/json"},
-            )
+        # chat_id is required by the Telegram API on every send; inject it here
+        # so all callers (send/signal_fired/error) get it without repeating it.
+        payload = {"chat_id": self.chat_id, **payload}
+        url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 body = json.loads(resp.read())
                 if not body.get("ok"):
                     logger.error("Telegram API error: %s", body)
                     return False
                 return True
+        except urllib.error.HTTPError as exc:
+            # Surface Telegram's error description (it's in the response body).
+            detail = ""
+            try:
+                detail = exc.read().decode(errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
+            logger.error(
+                "Telegram send failed: HTTP %s %s — %s", exc.code, exc.reason, detail,
+            )
+            return False
         except Exception:
             logger.exception("Failed to send Telegram message")
             return False
@@ -253,8 +268,9 @@ class TelegramNotifier:
         caption: str | None = None,
     ) -> bool:
         """Send a multipart/form-data request with a file attachment."""
-        import urllib.request
         import json
+        import urllib.error
+        import urllib.request
 
         url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
         boundary = uuid4().hex
@@ -313,6 +329,17 @@ class TelegramNotifier:
                     logger.error("Telegram API error (sendDocument): %s", resp_body)
                     return False
                 return True
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode(errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
+            logger.error(
+                "Telegram sendDocument failed: HTTP %s %s — %s",
+                exc.code, exc.reason, detail,
+            )
+            return False
         except Exception:
             logger.exception("Failed to send Telegram document")
             return False
