@@ -58,10 +58,12 @@ class TelegramConfig:
 
 @dataclass
 class SchwabConfig:
-    api_key: str = ""
-    api_secret: str = ""
-    account_id: str = ""
+    api_key: str = ""          # Schwab app key
+    api_secret: str = ""       # Schwab app secret
+    account_id: str = ""       # account number to use; blank = first linked account
     enabled: bool = False
+    callback_url: str = "https://127.0.0.1"
+    tokens_path: str = "~/watchy_config/schwab_tokens.json"
 
 
 @dataclass

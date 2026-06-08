@@ -6,7 +6,7 @@ file now tracks only what's left: the #4 bearish-skip and the pre-deploy smoke s
 
 ## Status (as of 2026-06-08)
 
-Done, pushed, unit-tested (179 tests green), and closed on GitHub:
+Done, pushed, unit-tested (192 tests green), and closed on GitHub:
 
 - **Phase 1:** #13 crossover signals, #11 Telegram 4096 split, #10 DeepSeek advisor key
 - **Phase 2:** #9 concurrency (RLock + per-ticker locks + scheduler jitter), #1 Tier 2 throttle,
@@ -17,7 +17,7 @@ Done, pushed, unit-tested (179 tests green), and closed on GitHub:
 
 **Open: #4 bearish-skip only.** The #4 position-context backend has **landed** (see below);
 everything else is deployable now — the position source degrades gracefully
-(Schwab stub → cache → manual file → no context), so nothing in the running paths requires it.
+(Schwab live → cache → manual file → no context), so nothing in the running paths requires it.
 
 ## Pre-deploy smoke steps (owner: **user**, on the VPS)
 
@@ -42,9 +42,12 @@ refresh (the 7-day reauth was the blocker). Fallback chain:
 Schwab API (live)  →  on-disk cached last-good snapshot (flagged stale)  →  manual positions.yaml
 ```
 
-- **`SchwabClient`** (`schwab.py`) is the live layer — its `_fetch_*` are **stubs**; `get_account_summary`
-  returns `None` on unavailable/error, an `AccountSummary` only on genuine success. Drop in the real
-  `schwabdev`/OAuth call later with **no structural change**.
+- **`SchwabClient`** (`schwab.py`) is the live layer — **implemented via `schwabdev`** (read-only:
+  positions + balances). `get_account_summary` returns `None` on unavailable/error (schwabdev missing,
+  OAuth not done, expired refresh token, API failure) and an `AccountSummary` only on genuine success.
+  Lazy, cached client; account selected by `account_id` (or first linked). Mapping/selection unit-tested
+  with a faked client (`tests/test_schwab.py`, 9). Needs a one-time browser OAuth on the daemon host;
+  refresh token lasts 7 days. **Open orders** are not fetched yet — optional follow-up (`account_orders`).
 - **`PositionCache`** writes a timestamped JSON snapshot on every successful live fetch and serves it
   (labelled with its age) when the live fetch fails — stale-but-real data survives token lapses.
 - **`FilePositionSource`** reads `~/watchy_config/positions.yaml` (schema in `positions.example.yaml`)

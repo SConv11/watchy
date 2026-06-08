@@ -87,6 +87,20 @@ def main() -> None:
     # ---- 6. Gemini advisor ----
     logger.info("Synthesizing advice (Gemini)...")
     position_source = get_position_source(config)
+
+    # Exercise the position source (Schwab live → cache → manual file) explicitly
+    # so the smoke run shows which layer answered and the resolved position.
+    portfolio_text = position_source.format_portfolio_context()
+    if portfolio_text:
+        logger.info("Portfolio context:\n%s", portfolio_text)
+    else:
+        logger.info("No portfolio data (Schwab disabled + no cache/manual file)")
+    position_text = position_source.format_position_context(ticker)
+    logger.info(
+        "Position for %s: %s", ticker,
+        f"\n{position_text}" if position_text else "none held / no data",
+    )
+
     advice = get_advice(ticker, result, position_source, config)
     if advice:
         logger.info(
@@ -99,7 +113,6 @@ def main() -> None:
     # ---- 7. Telegram notification ----
     logger.info("Sending to Telegram...")
     notifier = TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id)
-    position_text = position_source.format_position_context(ticker)
     ok = notifier.pipeline_result(
         ticker, signal_type, result,
         position_text=position_text,

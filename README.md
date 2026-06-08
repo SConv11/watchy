@@ -44,7 +44,7 @@
 2. **缓存快照（cached snapshot）** —— 当实时获取失败（token 过期需 7 天重新授权、API 故障、网络中断）时，回退到上次成功的快照，并在推送中标注数据时效（如 `Schwab cache, ... (3d 4h old)`），绝不把陈旧数据当成实时。
 3. **手动文件（manual file）** —— 最终兜底：`~/watchy_config/positions.yaml`（schema 见 `positions.example.yaml`）。用于 Schwab 首次授权前的引导，或彻底无可用数据时。手动文件的持仓会用 yfinance 实时价格补全市值与浮动盈亏（unrealized P&L），**同样标注时效**——优先读文件里可选的 `as_of:` 字段（你声明的持仓截至日期），否则退回文件修改时间（mtime）。
 
-> Schwab 的实时 API 调用目前是桩代码（stub）—— 缓存、回退、时效标注、测试已全部就绪；接上真实 OAuth 后，外层逻辑无需改动。
+> Schwab 实时层通过 **`schwabdev`** 包实现（只读：持仓 + 余额）。首次需在运行守护进程的机器上做一次浏览器 OAuth（schwabdev 打印授权 URL，授权后把回调 URL 粘回终端），token 存到 `tokens_path`（默认 `~/watchy_config/schwab_tokens.json`）；refresh token 有效期 7 天，到期需重新授权——任何实时获取失败都会自动回退到缓存快照、再到手动文件，守护进程不中断。配置见 `secrets.example.yaml` 的 `schwab:` 段。
 
 ## 快速开始（Quick Start）
 
@@ -185,7 +185,7 @@ watchy/
     ├── orchestrator.py       # 按信号类型的分级流水线选择
     ├── advisor.py            # LLM 合成: 分析报告 + 持仓 → 交易建议
     ├── positions.py          # 分层持仓源: Schwab → 缓存快照 → 手动文件
-    ├── schwab.py             # Schwab 券商 API 客户端 (实时层, 桩代码 stub)
+    ├── schwab.py             # Schwab 券商 API 客户端 (实时层, schwabdev)
     ├── notify.py             # Telegram 机器人通知
     ├── tier1.py              # 每小时信号扫描
     ├── tier2.py              # 每日完整流水线

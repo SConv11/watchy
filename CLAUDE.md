@@ -6,22 +6,26 @@ Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM 
 ## Current status — read first (updated 2026-06-07)
 
 The issue backlog (#1–#14) is done except the **Tier 1 bearish-skip** sub-task of #4.
-Committed, pushed, 179 unit tests green; fixed issues are closed on GitHub.
+Committed, pushed, 192 unit tests green; fixed issues are closed on GitHub.
 **Remind the user of these at session start:**
 
-- **#4 — position data source: backend SETTLED + landed; bearish-skip still OPEN.**
+- **#4 — position data source: backend landed (incl. real Schwab); bearish-skip still OPEN.**
   - **Done:** layered `PositionSource` (`watchy/positions.py`): **Schwab API (live) → on-disk
-    cached last-good snapshot (flagged stale) → manual `~/watchy_config/positions.yaml`**. The
-    Schwab live `_fetch_*` is a **stub** — cache, fallback chain, staleness labelling, and tests
-    are all real and pass. Manual-file backend enriches with live yfinance prices. Wiring/OAuth
-    for the real Schwab call is a drop-in fill-in (no structural change). See `positions.example.yaml`.
+    cached last-good snapshot (flagged stale) → manual `~/watchy_config/positions.yaml`**.
+    Schwab live layer is now **real, via `schwabdev`** (read-only positions + balances), not a
+    stub — mapping/selection unit-tested with a faked client (`tests/test_schwab.py`). Manual-file
+    backend enriches with live yfinance prices; both file & cache are age-labelled.
+    **User will register the Schwab app + do the one-time OAuth (refresh token = 7 days).**
+    `schwabdev` added to requirements/pyproject; config keys in `secrets.example.yaml`.
+    **Open orders not fetched yet** — optional follow-up (`account_orders`).
   - **Still open:** the Tier 1 **bearish-skip** (former #6) — skip the pipeline on a
     *confirmed-empty* position for `death_cross`/`macd_bearish_cross`. Needs tri-state
     held/empty/unknown semantics on the source (current `get_position` returns None for both
     not-held and no-data); not yet wired into `tier1.py`. See `docs/IMPLEMENTATION_PLAN.md`.
-- **Pre-deploy smoke (user will run, on the VPS):** (1) `tests/test_e2e.py <TICKER>` with real keys;
-  (2) `scripts/validate_yfc.py` on a **weekday during US market hours** (#2 intraday-staleness check).
-- **Deployable now** — the position source degrades gracefully (Schwab stub → cache → file → no
+- **Pre-deploy smoke (user will run, on the VPS):** (1) `tests/test_e2e.py <TICKER>` with real keys
+  (now also exercises + logs the Schwab/position layer); (2) `scripts/validate_yfc.py` on a
+  **weekday during US market hours** (#2 intraday-staleness check).
+- **Deployable now** — the position source degrades gracefully (Schwab live → cache → file → no
   context), so deploy no longer blocks on #4.
 
 Keep this block current as work progresses; remove it once the deploy is done.
