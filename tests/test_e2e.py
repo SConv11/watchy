@@ -27,7 +27,7 @@ from watchy.config import load_config
 from watchy.notify import TelegramNotifier
 from watchy.orchestrator import PipelineSpec, get_pipeline
 from watchy.pipeline_runner import create_tradingagents_runner
-from watchy.schwab import SchwabClient
+from watchy.positions import get_position_source
 
 logging.basicConfig(
     level=logging.INFO,
@@ -86,8 +86,8 @@ def main() -> None:
 
     # ---- 6. Gemini advisor ----
     logger.info("Synthesizing advice (Gemini)...")
-    schwab = SchwabClient(config.schwab)
-    advice = get_advice(ticker, result, schwab, config)
+    position_source = get_position_source(config)
+    advice = get_advice(ticker, result, position_source, config)
     if advice:
         logger.info(
             "Advice: decision=%s urgency=%s",
@@ -99,7 +99,7 @@ def main() -> None:
     # ---- 7. Telegram notification ----
     logger.info("Sending to Telegram...")
     notifier = TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id)
-    position_text = schwab.format_position_context(ticker)
+    position_text = position_source.format_position_context(ticker)
     ok = notifier.pipeline_result(
         ticker, signal_type, result,
         position_text=position_text,

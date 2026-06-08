@@ -1,12 +1,12 @@
 # Watchy Implementation Plan
 
-The original file-by-file backlog (issues #1–#14) is **complete except #4**. Finished
-work lives in git history and the closed GitHub issues — this file now tracks only what's
-left: the #4 position-data-source decision and the pre-deploy smoke steps.
+The original file-by-file backlog (issues #1–#14) is **complete except the bearish-skip
+sub-task of #4**. Finished work lives in git history and the closed GitHub issues — this
+file now tracks only what's left: the #4 bearish-skip and the pre-deploy smoke steps.
 
-## Status (as of 2026-06-07)
+## Status (as of 2026-06-08)
 
-Done, pushed, unit-tested (160 tests green), and closed on GitHub:
+Done, pushed, unit-tested (179 tests green), and closed on GitHub:
 
 - **Phase 1:** #13 crossover signals, #11 Telegram 4096 split, #10 DeepSeek advisor key
 - **Phase 2:** #9 concurrency (RLock + per-ticker locks + scheduler jitter), #1 Tier 2 throttle,
@@ -15,8 +15,9 @@ Done, pushed, unit-tested (160 tests green), and closed on GitHub:
   #7 Tier 1 market-hours guard
 - **Phase 4 (partial):** #5 price-proximity skip, #3 Telegram content/verdict
 
-**Open: #4 only.** Everything else is deployable now — Schwab is a safe stub
-(`enabled=False` → returns `None`), so nothing in the running paths requires it.
+**Open: #4 bearish-skip only.** The #4 position-context backend has **landed** (see below);
+everything else is deployable now — the position source degrades gracefully
+(Schwab stub → cache → manual file → no context), so nothing in the running paths requires it.
 
 ## Pre-deploy smoke steps (owner: **user**, on the VPS)
 
@@ -32,28 +33,37 @@ Run these before treating a deploy as live:
 **Goal — the only reason this feature exists:** know the user's current **position + open orders**
 per ticker, to (a) give the advisor position context and (b) drive the Tier 1 bearish-skip.
 
-**Design is OPEN — to discuss next session.** Schwab API is blocked for now (OAuth setup + the
-7-day refresh-token reauth burden). Reframe the feature around an **abstract position source** with
-raise-on-uncertainty semantics; Schwab becomes one backend among several:
+### (a) Position-context backend — **DONE** (`watchy/positions.py`)
 
-| Backend | Pros | Cons |
-|---------|------|------|
-| **Manual file** (`~/watchy_config/positions.yaml`) | trivial, no OAuth, clean held/empty for bearish-skip | manual upkeep |
-| **Email monitoring** (parse Schwab trade-confirmation emails) | no OAuth / no reauth / no API creds | fragile: reconstruct state from fills, needs an initial snapshot, eventual-consistency, open-order coverage gaps |
-| **Schwab API** (`schwabdev` / `schwab-py`) | real-time, authoritative | OAuth setup + 7-day manual reauth |
+Settled design: a layered, robust `PositionSource` so the daemon keeps working when Schwab can't
+refresh (the 7-day reauth was the blocker). Fallback chain:
 
-**Recommended near-term:** abstract the position interface, implement the **manual-file backend
-first** (unblocks the advisor + bearish-skip without OAuth); revisit email vs Schwab later.
+```
+Schwab API (live)  →  on-disk cached last-good snapshot (flagged stale)  →  manual positions.yaml
+```
 
-**Bearish-skip semantics (carry over from the former #6, regardless of backend):**
-- `get_position` **raises** on fetch failure; returns `None` only for a genuine no-holding.
+- **`SchwabClient`** (`schwab.py`) is the live layer — its `_fetch_*` are **stubs**; `get_account_summary`
+  returns `None` on unavailable/error, an `AccountSummary` only on genuine success. Drop in the real
+  `schwabdev`/OAuth call later with **no structural change**.
+- **`PositionCache`** writes a timestamped JSON snapshot on every successful live fetch and serves it
+  (labelled with its age) when the live fetch fails — stale-but-real data survives token lapses.
+- **`FilePositionSource`** reads `~/watchy_config/positions.yaml` (schema in `positions.example.yaml`)
+  as the final backstop; enriches with live yfinance prices to derive market value / unrealized P&L.
+- **`RobustPositionSource`** memoizes one snapshot per scan and appends provenance (`source: …`) so
+  stale/fallback data is never presented as live. Wired into advisor, tier1, tier2, and the e2e test.
+- Tests: `tests/test_positions.py` (19) — parsing, enrichment, cache round-trip, full fallback chain.
+
+### (b) Tier 1 bearish-skip — **OPEN** (former #6)
+
+Not yet implemented. Needs a **tri-state** on the source: HELD / CONFIRMED-EMPTY / UNKNOWN. The
+current `get_position` returns `None` for *both* not-held and no-data, which can't drive a safe skip.
+
+- Add a tri-state query (e.g. `get_holding_status(ticker)`): CONFIRMED-EMPTY only when a backend
+  authoritatively reports no holding; UNKNOWN when Schwab is stub/unavailable and there's no manual
+  entry. (The manual file is authoritative for tickers it lists; absent ticker + no live = UNKNOWN.)
 - Tier 1: for `death_cross` / `macd_bearish_cross` on a **confirmed-empty** position → skip the
-  pipeline (lightweight "not held" note). Held / fetch-error / not-configured → run the full
-  pipeline. `rsi_overbought` / `bollinger_upper_breach` are **not** skipped (SEPA entry signals).
-
-## Parked for next discussion
-- **Email-monitoring** (and manual-file vs Schwab) as the position-tracking backend — captured
-  above under #4. Decide the backend before implementing.
+  pipeline (lightweight "not held" note). Held / unknown / fetch-error → run the full pipeline.
+  `rsi_overbought` / `bollinger_upper_breach` are **not** skipped (SEPA entry signals).
 
 ## Resolved design decisions (context)
 - **#13** crossover → `== 0` / `== 1` (not `not prev`, which false-fires on a ticker's first scan).

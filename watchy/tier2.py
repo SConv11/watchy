@@ -21,7 +21,7 @@ from watchy.indicators import compute_indicators
 from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
 from watchy.orchestrator import get_scheduled_spec, run_pipeline
-from watchy.schwab import SchwabClient
+from watchy.positions import get_position_source
 from watchy.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -99,9 +99,9 @@ def _run_ticker(
             store.save_ticker_state(ticker, last_full_analysis_ts=_now_iso())
 
             # fetch position and synthesize advice
-            schwab = SchwabClient(config.schwab)
-            position_text = schwab.format_position_context(ticker)
-            advice = get_advice(ticker, result, schwab, config)
+            position_source = get_position_source(config)
+            position_text = position_source.format_position_context(ticker)
+            advice = get_advice(ticker, result, position_source, config)
 
             notifier.pipeline_result(
                 ticker, "scheduled_daily", result,

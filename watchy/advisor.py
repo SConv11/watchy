@@ -1,7 +1,7 @@
 """LLM-based position advisor.
 
-Takes a TradingAgents analysis report + Schwab position data and produces
-actionable advice on whether to alter the position.
+Takes a TradingAgents analysis report + position data (from any PositionSource)
+and produces actionable advice on whether to alter the position.
 
 The advisor is a lightweight LLM call — it synthesizes, it doesn't re-analyze.
 All the deep analysis is already done by TradingAgents.
@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from watchy.config import LLMConfig, WatchyConfig
-from watchy.schwab import SchwabClient
+from watchy.positions import PositionSource
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ Ticker: {ticker}
 def get_advice(
     ticker: str,
     analysis_result: dict[str, Any],
-    schwab: SchwabClient,
+    position_source: PositionSource,
     config: WatchyConfig,
 ) -> dict[str, str] | None:
     """Synthesize position-aware advice from analysis + portfolio.
@@ -72,8 +72,8 @@ def get_advice(
         logger.info("No LLM %s configured — skipping advisor synthesis", field)
         return None
 
-    position_text = schwab.format_position_context(ticker) or "No position held."
-    portfolio_text = schwab.format_portfolio_context() or "Portfolio data unavailable."
+    position_text = position_source.format_position_context(ticker) or "No position held."
+    portfolio_text = position_source.format_portfolio_context() or "Portfolio data unavailable."
 
     analysis_text = _format_analysis(analysis_result)
 

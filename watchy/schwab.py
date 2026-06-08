@@ -1,8 +1,12 @@
-"""Schwab API client for position and account data.
+"""Schwab API client — the live position backend (currently stubbed).
 
-Currently a stub — returns empty/None values when SchwabConfig.enabled is False.
-When enabled with valid credentials, this will call the Schwab REST API to fetch
-real positions, balances, and order history.
+This is the *live* layer of the position source. Schwab's OAuth needs a 7-day
+refresh-token reauth that's hostile to an unattended daemon, so robustness
+(caching the last good fetch, falling back to it, then to a manual file) lives in
+``RobustPositionSource`` — this client only talks to the API. It stays a safe
+stub: every method returns empty/None until ``SchwabConfig.enabled`` is set with
+real credentials and the ``_fetch_*`` methods are replaced with API calls. When
+that happens, the surrounding cache/fallback keeps working unchanged.
 
 API docs: https://developer.schwab.com/
 Python SDK: https://github.com/tylerebowers/Schwab-API-Python
@@ -11,42 +15,22 @@ Python SDK: https://github.com/tylerebowers/Schwab-API-Python
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any
 
 from watchy.config import SchwabConfig
+from watchy.positions import AccountSummary, Position, PositionSource
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class Position:
-    ticker: str
-    quantity: float
-    average_cost: float
-    market_value: float | None = None
-    unrealized_pnl: float | None = None
-    unrealized_pnl_pct: float | None = None
-    current_price: float | None = None
-
-
-@dataclass
-class AccountSummary:
-    account_id: str
-    total_value: float
-    buying_power: float
-    cash_balance: float
-    positions: list[Position] = field(default_factory=list)
-
-
-class SchwabClient:
-    """Schwab brokerage API client.
+class SchwabClient(PositionSource):
+    """Schwab brokerage API client (stub).
 
     When SchwabConfig.enabled is False (default), all methods return empty/None
-    values — safe to call, no errors, just no data.
+    values — safe to call, no errors, just no data. ``get_account_summary``
+    returning None is the signal the composite uses to fall back to cache/file.
 
     To enable, set enabled: true and fill in api_key, api_secret, account_id in
-    config.yaml, then replace the stub methods with real API calls.
+    config.yaml, then replace the stub _fetch_* methods with real API calls.
     """
 
     def __init__(self, config: SchwabConfig) -> None:
@@ -59,7 +43,6 @@ class SchwabClient:
         """Return the current position for a ticker, or None if not held."""
         if not self._ready:
             return None
-
         try:
             return self._fetch_position(ticker.upper())
         except Exception:
@@ -70,7 +53,6 @@ class SchwabClient:
         """Return all current positions."""
         if not self._ready:
             return []
-
         try:
             return self._fetch_all_positions()
         except Exception:
@@ -78,10 +60,9 @@ class SchwabClient:
             return []
 
     def get_account_summary(self) -> AccountSummary | None:
-        """Return account balances and buying power."""
+        """Return account balances and positions (None if unavailable/failed)."""
         if not self._ready:
             return None
-
         try:
             return self._fetch_account_summary()
         except Exception:
@@ -113,45 +94,10 @@ class SchwabClient:
         return []
 
     def _fetch_account_summary(self) -> AccountSummary | None:
-        """Stub — replace with account balances call."""
-        return None
+        """Stub — replace with account balances + positions call.
 
-    # --- helpers ---
-
-    def format_position_context(self, ticker: str) -> str | None:
-        """Return a human-readable summary of the position for LLM context.
-
-        Returns None if no position held or Schwab not configured.
+        Must raise on a real fetch failure (e.g. expired token) so the composite
+        falls back to cache; return an AccountSummary (possibly with no positions)
+        only on a genuine success.
         """
-        pos = self.get_position(ticker)
-        if pos is None:
-            return None
-
-        lines = [
-            f"Current position in {pos.ticker}:",
-            f"  Shares: {pos.quantity:.0f}" if pos.quantity == int(pos.quantity)
-            else f"  Shares: {pos.quantity}",
-            f"  Average cost: ${pos.average_cost:.2f}",
-        ]
-        if pos.current_price:
-            lines.append(f"  Current price: ${pos.current_price:.2f}")
-        if pos.market_value:
-            lines.append(f"  Market value: ${pos.market_value:,.2f}")
-        if pos.unrealized_pnl is not None:
-            lines.append(f"  Unrealized P&L: ${pos.unrealized_pnl:,.2f}")
-        return "\n".join(lines)
-
-    def format_portfolio_context(self) -> str | None:
-        """Return a summary of total account for LLM context."""
-        summary = self.get_account_summary()
-        if summary is None:
-            return None
-
-        lines = [
-            f"Account: {summary.account_id}",
-            f"  Total value: ${summary.total_value:,.2f}",
-            f"  Buying power: ${summary.buying_power:,.2f}",
-            f"  Cash: ${summary.cash_balance:,.2f}",
-            f"  Positions held: {len(summary.positions)}",
-        ]
-        return "\n".join(lines)
+        return None

@@ -1,0 +1,20 @@
+# Watchy manual position file (#4) — copy to ~/watchy_config/positions.yaml
+#
+# This is the FINAL fallback for position data. The live source is the Schwab
+# API; on a successful fetch its data is cached to ~/watchy_config/positions_cache.json
+# and served (flagged stale) if a later fetch fails. This file is used only when
+# there's no live data and no cache yet — e.g. before Schwab is first authorised.
+#
+# Update it whenever your holdings change. Never commit it (it lives outside the
+# repo, in ~/watchy_config/, alongside secrets.yaml).
+
+positions:
+  - ticker: NVDA
+    quantity: 100
+    average_cost: 120.50
+  - ticker: AAPL
+    quantity: 50
+    average_cost: 190.00
+    # current_price is optional — pin it to skip the live yfinance lookup
+    # (otherwise market value & unrealized P&L are derived from a live price).
+    # current_price: 195.00

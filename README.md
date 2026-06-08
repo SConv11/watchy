@@ -28,7 +28,7 @@
 │    └─────┘    退出（零成本）                        │
 │                                                   │
 │  每次分析完成后：                                   │
-│    Schwab 持仓 → LLM 顾问 → Telegram 推送          │
+│    持仓数据源 → LLM 顾问 → Telegram 推送           │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -36,7 +36,15 @@
 
 **Tier 2（第二层）**在配置的 UTC 时间运行（**周一–五 + 周日**，周六跳过，因与周日运行冗余）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
 
-**每次分析完成后**，Watchy 从 Schwab 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将分析报告与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。
+**每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将分析报告与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。
+
+**持仓数据源（position source，#4）是分层的，保证 Schwab 无法刷新时仍可用**：
+
+1. **Schwab API（实时）** —— 主数据源。每次成功获取后，快照（snapshot）会缓存到 `~/watchy_config/positions_cache.json`。
+2. **缓存快照（cached snapshot）** —— 当实时获取失败（token 过期需 7 天重新授权、API 故障、网络中断）时，回退到上次成功的快照，并在推送中标注数据时效（如 `Schwab cache, ... (3d 4h old)`），绝不把陈旧数据当成实时。
+3. **手动文件（manual file）** —— 最终兜底：`~/watchy_config/positions.yaml`（schema 见 `positions.example.yaml`）。用于 Schwab 首次授权前的引导，或彻底无可用数据时。手动文件的持仓会用 yfinance 实时价格补全市值与浮动盈亏（unrealized P&L）。
+
+> Schwab 的实时 API 调用目前是桩代码（stub）—— 缓存、回退、时效标注、测试已全部就绪；接上真实 OAuth 后，外层逻辑无需改动。
 
 ## 快速开始（Quick Start）
 
@@ -90,7 +98,8 @@ journalctl -u watchy -f  # 查看日志
 | `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |
 | `llm` | 顾问 LLM 配置——支持 Gemini、DeepSeek、OpenAI、Anthropic |
 | `telegram` | Telegram 机器人令牌（bot token）和聊天 ID |
-| `schwab` | Schwab 券商凭证（可选——启用后获得持仓感知建议） |
+| `schwab` | Schwab 券商凭证（持仓数据主源；未配置时自动回退到缓存/手动文件） |
+| `positions.yaml` | 手动持仓文件（最终兜底，放 `~/watchy_config/`，不提交）；schema 见 `positions.example.yaml` |
 
 > **数据获取与缓存**：行情通过 `yfinance` 获取，并叠加 `yfinance-cache` 磁盘缓存层
 > （智能缓存，仅拉取缺失/过期的 bar），减少对 Yahoo 的重复请求。缓存层为可选依赖——
@@ -175,7 +184,8 @@ watchy/
     ├── indicators.py         # 技术指标计算 (yfinance + pandas, 无 LLM)
     ├── orchestrator.py       # 按信号类型的分级流水线选择
     ├── advisor.py            # LLM 合成: 分析报告 + 持仓 → 交易建议
-    ├── schwab.py             # Schwab 券商 API 客户端 (桩代码 stub)
+    ├── positions.py          # 分层持仓源: Schwab → 缓存快照 → 手动文件
+    ├── schwab.py             # Schwab 券商 API 客户端 (实时层, 桩代码 stub)
     ├── notify.py             # Telegram 机器人通知
     ├── tier1.py              # 每小时信号扫描
     ├── tier2.py              # 每日完整流水线

@@ -25,7 +25,7 @@ from watchy.orchestrator import (
     get_pipeline,
     run_pipeline,
 )
-from watchy.schwab import SchwabClient
+from watchy.positions import get_position_source
 from watchy.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -138,9 +138,9 @@ def _handle_signal(
         store.complete_run(run_id, success=True, summary=result.get("summary", ""))
 
         # fetch position and synthesize advice
-        schwab = SchwabClient(config.schwab)
-        position_text = schwab.format_position_context(ticker)
-        advice = get_advice(ticker, result, schwab, config)
+        position_source = get_position_source(config)
+        position_text = position_source.format_position_context(ticker)
+        advice = get_advice(ticker, result, position_source, config)
 
         notifier.pipeline_result(
             ticker, sig, result,
