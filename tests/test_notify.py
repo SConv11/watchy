@@ -163,6 +163,29 @@ class TestPipelineResultContent:
         text = self._sent_text(mock_post)
         assert "A" * 350 in text  # full 350 present, not cut at 200
 
+    def test_advice_sent_as_separate_message(self):
+        notifier = self._notifier()
+        result = {"verdict": "BUY", "analyst_count": 4, "summary": "s",
+                  "recommendations": []}
+        advice = {"decision": "HOLD", "urgency": "LOW",
+                  "detail": "Hold the position; trim only above $400."}
+        with patch.object(notifier, "_post", return_value=True) as mock_post:
+            notifier.pipeline_result(
+                "GOOG", "scheduled_daily", result,
+                position_text="Current position in GOOG:\n  Shares: 1",
+                advice=advice,
+            )
+        texts = [call.args[1]["text"] for call in mock_post.call_args_list]
+        # The analysis message and the position/advice message are distinct posts.
+        analysis_msgs = [t for t in texts if "Verdict:" in t]
+        advice_msgs = [t for t in texts if "Position Advice" in t]
+        assert analysis_msgs and advice_msgs
+        # No single message mixes the analyst verdict with the advisor block.
+        assert not any("Verdict:" in t and "Position Advice" in t for t in texts)
+        # The advice detail and the position context ride with the advice message.
+        assert any("trim only above $400" in t for t in advice_msgs)
+        assert any("Current position in GOOG" in t for t in advice_msgs)
+
     def test_long_message_is_chunk_safe(self):
         notifier = self._notifier()
         result = {

@@ -186,27 +186,32 @@ class TelegramNotifier:
             short = esc(summary[:400] + "..." if len(summary) > 400 else summary)
             lines.append(f"<b>Summary:</b> {short}")
 
-        # position context
-        if position_text:
-            lines.append("")
-            lines.append(f"<b>Your Position:</b>\n{esc(position_text)}")
+        ok = self.send("\n".join(lines))
 
-        # advisor synthesis
+        # Position context + advisor synthesis go in a SEPARATE message. It's a
+        # different source (the Gemini advisor, not the analyst team), and keeping
+        # it apart stops the advice paragraph from being chunk-split across the
+        # analysis text.
+        advice_lines: list[str] = []
+        if position_text:
+            advice_lines.append(f"<b>Your Position</b> — ${ticker}")
+            advice_lines.append(esc(position_text))
         if advice:
             decision = esc(advice.get("decision", "?"))
             urgency = advice.get("urgency", "")
             detail = esc(advice.get("detail", ""))
 
             urgency_icon = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(urgency, "")
-            lines.append("")
-            lines.append(
-                f"<b>Position Advice:</b> {urgency_icon} <b>{decision}</b>"
+            if advice_lines:
+                advice_lines.append("")
+            advice_lines.append(
+                f"<b>Position Advice</b> — ${ticker}: {urgency_icon} <b>{decision}</b>"
                 + (f" ({urgency} urgency)" if urgency else "")
             )
             if detail:
-                lines.append(detail)
-
-        ok = self.send("\n".join(lines))
+                advice_lines.append(detail)
+        if advice_lines:
+            ok = self.send("\n".join(advice_lines)) and ok
 
         # Send the full markdown report as a document
         report_path = result.get("report_path")
