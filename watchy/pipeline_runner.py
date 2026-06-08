@@ -361,7 +361,12 @@ def _format_result(
 
     # Structured one-word verdict (#3) — the headline BUY/SELL/HOLD, surfaced so
     # notifications can show it without the reader parsing the whole summary.
-    verdict = _extract_verdict(str(final_decision) or decision_text)
+    # Graduated Tier 1 subsets may not produce a final_trade_decision, so fall
+    # through the trader plan and decision text too (e.g. a trader plan that opens
+    # with "**Action**: Sell"), not just the final decision.
+    verdict = _extract_verdict(
+        "\n".join(filter(None, [str(final_decision), str(trader_plan), decision_text]))
+    )
 
     return {
         "ticker": ticker,
@@ -389,6 +394,13 @@ def _extract_verdict(text: str) -> str:
         return ""
     m = re.search(
         r"FINAL TRANSACTION PROPOSAL:\s*\*{0,2}\s*(BUY|SELL|HOLD)", text, re.IGNORECASE
+    )
+    if m:
+        return m.group(1).upper()
+    # Structured "Action:" / "Recommendation:" line (graduated subsets use these).
+    m = re.search(
+        r"(?:Action|Recommendation)\s*\*{0,2}\s*:\s*\*{0,2}\s*(BUY|SELL|HOLD)",
+        text, re.IGNORECASE,
     )
     if m:
         return m.group(1).upper()

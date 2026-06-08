@@ -117,7 +117,6 @@ def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
 
         <detail paragraph...>
     """
-    lines = raw.split("\n")
     parsed: dict[str, str] = {
         "ticker": fallback_ticker,
         "decision": "",
@@ -125,25 +124,30 @@ def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
         "detail": "",
     }
 
-    detail_start = 0
-    for i, line in enumerate(lines):
+    # Scan every line for the header fields (first match wins) rather than
+    # stopping at the first non-header line — the model sometimes emits a blank
+    # line or a short preamble before "Decision:", which previously dropped the
+    # decision/urgency entirely. Non-header lines become the detail paragraph.
+    got = {"ticker": False, "decision": False, "urgency": False}
+    detail_lines: list[str] = []
+    for line in raw.split("\n"):
         stripped = line.strip()
-        if stripped.lower().startswith("ticker:"):
+        low = stripped.lower()
+        if not got["ticker"] and low.startswith("ticker:"):
             val = stripped.split(":", 1)[1].strip()
             if val:
                 parsed["ticker"] = val
-        elif stripped.lower().startswith("decision:"):
+            got["ticker"] = True
+        elif not got["decision"] and low.startswith("decision:"):
             parsed["decision"] = stripped.split(":", 1)[1].strip().upper()
-        elif stripped.lower().startswith("urgency:"):
+            got["decision"] = True
+        elif not got["urgency"] and low.startswith("urgency:"):
             parsed["urgency"] = stripped.split(":", 1)[1].strip().upper()
-        else:
-            detail_start = i
-            break
+            got["urgency"] = True
+        elif stripped:
+            detail_lines.append(stripped)
 
-    # Everything after the header lines is the detail paragraph.
-    detail_lines = [l.strip() for l in lines[detail_start:] if l.strip()]
     parsed["detail"] = " ".join(detail_lines)
-
     return parsed
 
 
@@ -202,6 +206,12 @@ def _format_analysis(result: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Advice is a structured header + a 5-8 sentence paragraph with price targets,
+# sizing, reasons, risks. 600 tokens truncated it mid-sentence (and on Gemini 2.5
+# thinking models the budget is shared with hidden reasoning), so give it room.
+_ADVICE_MAX_TOKENS = 1024
+
+
 def _effective_key(llm: LLMConfig) -> str:
     """Resolve the API key for the configured provider.
 
@@ -223,7 +233,7 @@ def _call_anthropic(prompt: str, llm: LLMConfig) -> str:
 
     body = json.dumps({
         "model": llm.model,
-        "max_tokens": 600,
+        "max_tokens": _ADVICE_MAX_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
 
@@ -254,7 +264,7 @@ def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
 
     body = json.dumps({
         "model": llm.model,
-        "max_tokens": 600,
+        "max_tokens": _ADVICE_MAX_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
 
@@ -284,7 +294,13 @@ def _call_gemini(prompt: str, llm: LLMConfig) -> str:
 
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 600},
+        "generationConfig": {
+            "maxOutputTokens": _ADVICE_MAX_TOKENS,
+            # gemini-2.5-flash counts hidden "thinking" tokens against the output
+            # budget; disable it so the whole budget produces the visible answer
+            # (this is a synthesis task, not one that needs extended reasoning).
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }).encode()
 
     req = urllib.request.Request(

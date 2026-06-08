@@ -82,6 +82,26 @@ detail"""
         assert parsed["decision"] == "BUY"  # uppercased
         assert parsed["urgency"] == "HIGH"
 
+    def test_decision_after_preamble_line(self):
+        """A preamble before the header must not drop decision/urgency (AVGO bug)."""
+        raw = (
+            'Here is my assessment.\n\n'
+            'Ticker: AVGO\nDecision: HOLD\nUrgency: LOW\n\n'
+            'Wait for confirmation before adding.'
+        )
+        parsed = _parse_advice(raw, "AVGO")
+        assert parsed["decision"] == "HOLD"
+        assert parsed["urgency"] == "LOW"
+        assert "Wait for confirmation" in parsed["detail"]
+        assert "Here is my assessment" in parsed["detail"]
+
+    def test_blank_first_line_still_parses(self):
+        raw = "\nDecision: BUY\nUrgency: HIGH\n\nDetail here."
+        parsed = _parse_advice(raw, "NVDA")
+        assert parsed["decision"] == "BUY"
+        assert parsed["urgency"] == "HIGH"
+        assert parsed["detail"] == "Detail here."
+
     def test_no_header_lines(self):
         """If there are no Ticker:/Decision:/Urgency: lines, everything is detail."""
         raw = "Just a plain recommendation to BUY NVDA at these levels."

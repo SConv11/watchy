@@ -89,6 +89,23 @@ class TestExtractVerdict:
         text = "Some say buy, others sell. FINAL TRANSACTION PROPOSAL: **HOLD**"
         assert _extract_verdict(text) == "HOLD"
 
+    def test_action_line(self):
+        # Graduated subsets use a "**Action**: Sell" trader plan (the MOD bug).
+        assert _extract_verdict("**Action**: Sell\n**Reasoning**: ...") == "SELL"
+
+    def test_recommendation_line(self):
+        assert _extract_verdict("Recommendation: BUY at these levels") == "BUY"
+
+    def test_verdict_from_trader_plan_when_final_decision_empty(self):
+        final_state = {
+            "trader_investment_plan": "**Action**: Sell\n**Reasoning**: overvalued.",
+            "final_trade_decision": "",
+        }
+        result = _format_result(
+            "MOD", _daily_spec(), ["market", "social"], final_state, "",
+        )
+        assert result["verdict"] == "SELL"
+
 
 class TestAnalystMapping:
     def test_none_to_empty(self):
