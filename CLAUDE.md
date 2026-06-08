@@ -3,10 +3,16 @@
 Watchy is a stock-monitoring daemon built on top of TradingAgents.
 Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM pipeline.
 
-## Current status — read first (updated 2026-06-07)
+## Current status — read first (updated 2026-06-08)
+
+**Deployed & validated on the VPS (2026-06-08).** The daemon runs under systemd
+(`watchy.service`, env `trading`); both pre-deploy smokes passed: `tests/test_e2e.py GOOG`
+(full pipeline → manual-file position → advisor → Telegram) and `scripts/validate_yfc.py`
+during Monday market hours (#2 yfc tracks the still-forming bar within 0.0112%, `Final?=False`,
+`max_age=10min` — `OK — yfc compatible`). Telegram + position context confirmed working live.
 
 The issue backlog (#1–#14) is **done**; remaining #4 items are **deferred by choice**.
-Committed, pushed, 192 unit tests green; fixed issues are closed on GitHub.
+Committed, pushed, 199 unit tests green; fixed issues are closed on GitHub.
 **Remind the user of these at session start:**
 
 - **#4 — position data source: backend landed (incl. real Schwab). No blocking work left.**
@@ -23,13 +29,16 @@ Committed, pushed, 192 unit tests green; fixed issues are closed on GitHub.
     "not held" from a manual file. **Revisit only when Schwab is live & authoritative**, gated so
     the skip fires solely on an authoritative live "confirmed-empty" (file/cache/unknown → run).
   - **Optional, not built:** open orders (`account_orders`).
-- **Pre-deploy smoke (user will run, on the VPS):** (1) `tests/test_e2e.py <TICKER>` with real keys
-  (now also exercises + logs the Schwab/position layer); (2) `scripts/validate_yfc.py` on a
-  **weekday during US market hours** (#2 intraday-staleness check).
-- **Deployable now** — the position source degrades gracefully (Schwab live → cache → file → no
-  context), so deploy no longer blocks on #4.
+- **Pre-deploy smoke: DONE** (both passed on the VPS, 2026-06-08) — see the deploy note above.
+- **Ops notes:** daemon env is the `trading` pyenv (`/home/watchy/.pyenv/versions/3.11.9/envs/trading/bin/python`)
+  — run repo scripts with *that* python (the bare `python` shim lacks `yfinance_cache`, harmless
+  fallback). `positions.yaml` is hand-maintained (update holdings + `as_of` when they change).
+  Tier 1 = every 30 min/ticker (jitter ±5 min, market-hours gated); Tier 2 = daily 11:30 UTC
+  (Sat skipped). Job errors are pushed to Telegram; startup/config errors only hit the journal
+  (`journalctl -u watchy -f`).
 
-Keep this block current as work progresses; remove it once the deploy is done.
+This block can be trimmed next session now that the deploy is validated; keep the deferred-#4
+and ops notes.
 
 ## Cross-machine workflow (local + VPS, synced via Git)
 

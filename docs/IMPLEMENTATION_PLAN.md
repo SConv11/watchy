@@ -21,14 +21,16 @@ bearish-skip is **dropped for now** and open-orders is **optional** — both def
 not blockers. Deployable now — the position source degrades gracefully
 (Schwab live → cache → manual file → no context).
 
-## Pre-deploy smoke steps (owner: **user**, on the VPS)
+## Pre-deploy smoke steps — DONE & PASSED (VPS, 2026-06-08)
 
-Run these before treating a deploy as live:
+1. **`tests/test_e2e.py GOOG`** ✅ — full pipeline → manual-file position → advisor → Telegram.
+   Surfaced & fixed a live Telegram 400 (sendMessage payload was missing `chat_id`).
+2. **`scripts/validate_yfc.py`** ✅ (Monday market hours) — yfc tracks the still-forming bar within
+   0.0112% (« 0.2% threshold), `Final?=False`, `max_age=10min`, verdict `OK — yfc compatible`. No
+   `Final?`/`FetchDate` degrade-guard needed.
 
-1. **`tests/test_e2e.py <TICKER>`** — one real end-to-end TradingAgents run (needs real keys).
-2. **`scripts/validate_yfc.py` on a weekday during US market hours** — confirm #2's `max_age`
-   keeps the still-forming daily bar fresh (intraday staleness couldn't be tested on a weekend).
-   If yfc still serves a stale bar, add the `Final?`/`FetchDate` degrade-guard (see #2 in git log).
+Daemon is live under systemd (`watchy.service`, env `trading`). Run repo scripts with that env's
+python — the bare `python` shim lacks the optional `yfinance_cache` (harmless fallback).
 
 ## #4 — Position data source  *(was: "Schwab API integration")*
 
