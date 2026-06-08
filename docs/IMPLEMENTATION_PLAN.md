@@ -1,8 +1,9 @@
 # Watchy Implementation Plan
 
-The original file-by-file backlog (issues #1–#14) is **complete except the bearish-skip
-sub-task of #4**. Finished work lives in git history and the closed GitHub issues — this
-file now tracks only what's left: the #4 bearish-skip and the pre-deploy smoke steps.
+The original file-by-file backlog (issues #1–#14) is **complete**. Finished work lives in
+git history and the closed GitHub issues. The only remaining items are **deferred by choice**:
+the #4 bearish-skip (dropped until Schwab is authoritative) and open-orders (optional) — plus
+the pre-deploy smoke steps.
 
 ## Status (as of 2026-06-08)
 
@@ -15,9 +16,10 @@ Done, pushed, unit-tested (192 tests green), and closed on GitHub:
   #7 Tier 1 market-hours guard
 - **Phase 4 (partial):** #5 price-proximity skip, #3 Telegram content/verdict
 
-**Open: #4 bearish-skip only.** The #4 position-context backend has **landed** (see below);
-everything else is deployable now — the position source degrades gracefully
-(Schwab live → cache → manual file → no context), so nothing in the running paths requires it.
+**No blocking work left.** The #4 position-context backend has **landed** (see below); the
+bearish-skip is **dropped for now** and open-orders is **optional** — both deferred by choice,
+not blockers. Deployable now — the position source degrades gracefully
+(Schwab live → cache → manual file → no context).
 
 ## Pre-deploy smoke steps (owner: **user**, on the VPS)
 
@@ -57,17 +59,22 @@ Schwab API (live)  →  on-disk cached last-good snapshot (flagged stale)  →  
   stale/fallback data is never presented as live. Wired into advisor, tier1, tier2, and the e2e test.
 - Tests: `tests/test_positions.py` (19) — parsing, enrichment, cache round-trip, full fallback chain.
 
-### (b) Tier 1 bearish-skip — **OPEN** (former #6)
+### (b) Tier 1 bearish-skip — **DROPPED for now** (former #6); revisit only with authoritative Schwab
 
-Not yet implemented. Needs a **tri-state** on the source: HELD / CONFIRMED-EMPTY / UNKNOWN. The
-current `get_position` returns `None` for *both* not-held and no-data, which can't drive a safe skip.
+**Decision (2026-06-08, user):** do **not** implement while the manual file is the position source.
+The skip's only payoff is saving LLM cost on a bearish cross for a name you don't hold — not worth the
+failure mode it introduces. Determining "confirmed-empty" from the manual file is unsafe/high-upkeep:
+the user won't list non-held tickers as `quantity: 0`, and an opt-in "file is authoritative" flag would
+silently go stale (a forgotten holding → its death cross gets wrongly skipped = a missed sell alert).
 
-- Add a tri-state query (e.g. `get_holding_status(ticker)`): CONFIRMED-EMPTY only when a backend
-  authoritatively reports no holding; UNKNOWN when Schwab is stub/unavailable and there's no manual
-  entry. (The manual file is authoritative for tickers it lists; absent ticker + no live = UNKNOWN.)
-- Tier 1: for `death_cross` / `macd_bearish_cross` on a **confirmed-empty** position → skip the
-  pipeline (lightweight "not held" note). Held / unknown / fetch-error → run the full pipeline.
-  `rsi_overbought` / `bollinger_upper_breach` are **not** skipped (SEPA entry signals).
+**Revisit condition:** only once **Schwab is live and authoritative** — then held/not-held is known for
+free with zero upkeep. If built then, gate it strictly:
+
+- Skip **only** when an *authoritative live Schwab* fetch reports the ticker as not-held
+  (CONFIRMED-EMPTY). Manual file, cached snapshot, fetch-error, or Schwab-disabled → **UNKNOWN → always
+  run** the pipeline. Never infer "empty" from the manual file's silence.
+- Applies to `death_cross` / `macd_bearish_cross` only; `rsi_overbought` / `bollinger_upper_breach` are
+  SEPA entry signals and are never skipped.
 
 ## Resolved design decisions (context)
 - **#13** crossover → `== 0` / `== 1` (not `not prev`, which false-fires on a ticker's first scan).

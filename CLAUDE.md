@@ -5,23 +5,24 @@ Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM 
 
 ## Current status — read first (updated 2026-06-07)
 
-The issue backlog (#1–#14) is done except the **Tier 1 bearish-skip** sub-task of #4.
+The issue backlog (#1–#14) is **done**; remaining #4 items are **deferred by choice**.
 Committed, pushed, 192 unit tests green; fixed issues are closed on GitHub.
 **Remind the user of these at session start:**
 
-- **#4 — position data source: backend landed (incl. real Schwab); bearish-skip still OPEN.**
+- **#4 — position data source: backend landed (incl. real Schwab). No blocking work left.**
   - **Done:** layered `PositionSource` (`watchy/positions.py`): **Schwab API (live) → on-disk
     cached last-good snapshot (flagged stale) → manual `~/watchy_config/positions.yaml`**.
-    Schwab live layer is now **real, via `schwabdev`** (read-only positions + balances), not a
-    stub — mapping/selection unit-tested with a faked client (`tests/test_schwab.py`). Manual-file
-    backend enriches with live yfinance prices; both file & cache are age-labelled.
-    **User will register the Schwab app + do the one-time OAuth (refresh token = 7 days).**
-    `schwabdev` added to requirements/pyproject; config keys in `secrets.example.yaml`.
-    **Open orders not fetched yet** — optional follow-up (`account_orders`).
-  - **Still open:** the Tier 1 **bearish-skip** (former #6) — skip the pipeline on a
-    *confirmed-empty* position for `death_cross`/`macd_bearish_cross`. Needs tri-state
-    held/empty/unknown semantics on the source (current `get_position` returns None for both
-    not-held and no-data); not yet wired into `tier1.py`. See `docs/IMPLEMENTATION_PLAN.md`.
+    Schwab live layer is **real, via `schwabdev`** (read-only positions + balances) — mapping/
+    selection unit-tested with a faked client (`tests/test_schwab.py`). Manual-file backend
+    enriches with live yfinance prices; both file & cache are age-labelled.
+    **Schwab needs developer-app approval (pending) + a one-time OAuth (refresh token = 7 days);
+    until then keep `schwab.enabled: false` and rely on the manual file.**
+    `schwabdev` in requirements/pyproject; config keys in `secrets.example.yaml`.
+  - **Deferred by user (2026-06-08):** the Tier 1 **bearish-skip** (former #6) is **dropped for
+    now** — its only payoff is LLM-cost savings, not worth the missed-alert risk of inferring
+    "not held" from a manual file. **Revisit only when Schwab is live & authoritative**, gated so
+    the skip fires solely on an authoritative live "confirmed-empty" (file/cache/unknown → run).
+  - **Optional, not built:** open orders (`account_orders`).
 - **Pre-deploy smoke (user will run, on the VPS):** (1) `tests/test_e2e.py <TICKER>` with real keys
   (now also exercises + logs the Schwab/position layer); (2) `scripts/validate_yfc.py` on a
   **weekday during US market hours** (#2 intraday-staleness check).
