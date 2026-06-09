@@ -2,10 +2,12 @@
 
 from datetime import datetime, timezone
 
+from types import SimpleNamespace
+
 from watchy.advisor import _parse_advice, parse_price
 from watchy.config import TickerConfig
 from watchy.proximity import is_outside_proximity
-from watchy.tier2 import _effective_target, _should_skip_tier2
+from watchy.tier2 import _effective_target, _is_held, _should_skip_tier2
 
 # 2026-06-08 is a Monday (weekday 0); 2026-06-07 is a Sunday (weekday 6).
 MONDAY = datetime(2026, 6, 8, tzinfo=timezone.utc)
@@ -51,34 +53,61 @@ class TestShouldSkipTier2:
     def _tc(self, **kw):
         return TickerConfig(ticker="AAPL", tier2_min_price_proximity_pct=5.0, **kw)
 
-    def test_weekday_far_skips(self):
+    def test_weekday_far_not_held_skips(self):
         tc = self._tc(target_price=180.0)
-        assert _should_skip_tier2(210.0, tc, {}, MONDAY) is True
+        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=False) is True
+
+    def test_held_never_skips(self):
+        # even far + weekday + opted-in: a position we HOLD always runs
+        tc = self._tc(target_price=180.0)
+        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=True) is False
 
     def test_weekday_near_runs(self):
         tc = self._tc(target_price=180.0)
-        assert _should_skip_tier2(184.0, tc, {}, MONDAY) is False
+        assert _should_skip_tier2(184.0, tc, {}, MONDAY, held=False) is False
 
     def test_sunday_never_skips(self):
         tc = self._tc(target_price=180.0)
-        assert _should_skip_tier2(210.0, tc, {}, SUNDAY) is False
+        assert _should_skip_tier2(210.0, tc, {}, SUNDAY, held=False) is False
 
     def test_no_pct_never_skips(self):
         tc = TickerConfig(ticker="AAPL", target_price=180.0)
-        assert _should_skip_tier2(210.0, tc, {}, MONDAY) is False
+        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=False) is False
 
     def test_no_target_never_skips(self):
         # pct configured but neither manual nor derived target → can't gate
-        assert _should_skip_tier2(210.0, self._tc(), {}, MONDAY) is False
+        assert _should_skip_tier2(210.0, self._tc(), {}, MONDAY, held=False) is False
 
     def test_uses_derived_target(self):
         # no manual target; a derived target far from price → skip on a weekday
         assert _should_skip_tier2(
-            210.0, self._tc(), {"derived_target_price": 180.0}, MONDAY
+            210.0, self._tc(), {"derived_target_price": 180.0}, MONDAY, held=False
         ) is True
 
     def test_no_ticker_config(self):
-        assert _should_skip_tier2(210.0, None, {}, MONDAY) is False
+        assert _should_skip_tier2(210.0, None, {}, MONDAY, held=False) is False
+
+
+class TestIsHeld:
+    def _src(self, get_position):
+        return SimpleNamespace(get_position=get_position)
+
+    def test_held_when_nonzero_quantity(self):
+        src = self._src(lambda t: SimpleNamespace(quantity=50))
+        assert _is_held(src, "AAPL") is True
+
+    def test_not_held_when_none(self):
+        src = self._src(lambda t: None)
+        assert _is_held(src, "AAPL") is False
+
+    def test_not_held_when_zero_quantity(self):
+        src = self._src(lambda t: SimpleNamespace(quantity=0))
+        assert _is_held(src, "AAPL") is False
+
+    def test_lookup_error_treated_as_held(self):
+        def boom(t):
+            raise RuntimeError("schwab down")
+        assert _is_held(self._src(boom), "AAPL") is True
 
 
 class TestParsePrice:

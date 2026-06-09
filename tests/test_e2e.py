@@ -103,9 +103,14 @@ def main() -> None:
 
     advice = get_advice(ticker, result, position_source, config)
     if advice:
+        from watchy.advisor import parse_price
+        raw_target = advice.get("target", "")
+        derived = parse_price(raw_target)
         logger.info(
-            "Advice: decision=%s urgency=%s",
+            "Advice: decision=%s urgency=%s target=%r -> %s",
             advice.get("decision"), advice.get("urgency"),
+            raw_target,
+            f"{derived:.2f}" if derived is not None else "N/A (no #16 auto-target)",
         )
     else:
         logger.warning("No advice generated (check LLM config)")

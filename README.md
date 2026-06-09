@@ -36,7 +36,7 @@
 
 **Tier 2（第二层）**在配置的 UTC 时间运行（**周一–五 + 周日**，周六跳过，因与周日运行冗余）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
 
-**Tier 2 价格邻近门控（price-proximity gate，#15，按票可选）**：给某只票设置 `tier2_min_price_proximity_pct` 后，**工作日**若现价离目标价超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）；**周日永远运行**（每周一次完整更新，含新闻）。这是 watch-only（非持仓）远离入场区的票的成本开关——持仓且想每天分析的票不设此项即可。目标价优先用手动 `target_price`，否则用 **自动推导的目标价（#16）**：每次 Tier 2 运行时，从顾问输出的 `Target:` 字段提取并存入 `state.db`，免去手动维护 `target_price` 而失效的问题（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
+**Tier 2 价格邻近门控（price-proximity gate，#15，按票可选）**：给某只票设置 `tier2_min_price_proximity_pct` 后，**工作日**若现价离 **入场目标价（entry target）** 超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）。门控只针对 **watch-only（非持仓）** 的票：**只要当前持有该票（position source 查到非零持仓），Tier 2 永远运行**——有资金敞口就值得每天分析，与价格无关（持仓查询出错时也按"持有"处理，宁可多跑）。**周日永远运行**（每周一次完整更新，含新闻）。入场目标价优先用手动 `target_price`，否则用 **自动推导值（#16）**：每次 Tier 2 运行时从顾问输出的结构化 `Target:` 字段提取（语义明确为"建仓/加仓的入场价"，不是止损也不是止盈）并存入 `state.db`（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
 
 **每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将分析报告与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。
 

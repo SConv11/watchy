@@ -88,15 +88,19 @@ def _run_ticker(
         }
 
     # Tier 2 price-proximity gate (#15): on weekdays, skip the expensive LLM
-    # pipeline for a watch ticker trading far from its (manual or auto-derived)
-    # target. Sunday is always run (weekly full update); held names you always
-    # want analysed simply don't set tier2_min_price_proximity_pct.
+    # pipeline for a *watch* (non-held) ticker trading far from its entry target
+    # (manual or #16 auto-derived). NEVER skip a held ticker — you have capital at
+    # risk, so daily analysis is worth the tokens regardless of where price sits.
+    # Sunday is always run (weekly full update).
     tc = config.get_ticker_config(ticker)
     state = store.get_ticker_state(ticker)
-    if _should_skip_tier2(price, tc, state, now):
+    position_source = get_position_source(config)
+    held = _is_held(position_source, ticker)
+    if _should_skip_tier2(price, tc, state, now, held):
         target = _effective_target(tc, state)
         logger.info(
-            "Tier 2 skip %s — price %.2f outside %.2f%% of target %.2f (weekday gate)",
+            "Tier 2 skip %s — not held, price %.2f outside %.2f%% of entry target %.2f "
+            "(weekday gate)",
             ticker, price, tc.tier2_min_price_proximity_pct, target,
         )
         return {"ticker": ticker, "skipped": "out_of_proximity", "target": target}
@@ -116,8 +120,7 @@ def _run_ticker(
             store.complete_run(run_id, success=True, summary=result.get("summary", ""))
             store.save_ticker_state(ticker, last_full_analysis_ts=_now_iso())
 
-            # fetch position and synthesize advice
-            position_source = get_position_source(config)
+            # synthesize advice (reuse the position source from the gate check)
             position_text = position_source.format_position_context(ticker)
             advice = get_advice(ticker, result, position_source, config)
 
@@ -158,19 +161,38 @@ def _effective_target(
     return state.get("derived_target_price")
 
 
+def _is_held(position_source: Any, ticker: str) -> bool:
+    """True if a non-zero position in *ticker* is known.
+
+    Conservative on uncertainty: a lookup error counts as held (→ run), since
+    skipping a ticker we might own is the dangerous outcome. A clean ``None``
+    from the layered source means confidently not-held.
+    """
+    try:
+        pos = position_source.get_position(ticker)
+    except Exception:  # noqa: BLE001
+        logger.warning("position lookup failed for %s — treating as held (will run)", ticker)
+        return True
+    return pos is not None and getattr(pos, "quantity", 0) != 0
+
+
 def _should_skip_tier2(
     price: float | None,
     tc: TickerConfig | None,
     state: dict[str, Any],
     now: datetime,
+    held: bool,
 ) -> bool:
     """Whether Tier 2 should skip this ticker on this day (#15).
 
-    Sunday is never gated (weekly full run). Otherwise skip only when the ticker
-    opts in via tier2_min_price_proximity_pct and price is outside that band of
-    the effective target.
+    Held tickers are never gated (capital at risk → always analyse). Sunday is
+    never gated (weekly full run). Otherwise skip only when the ticker opts in
+    via tier2_min_price_proximity_pct and price is outside that band of the
+    effective *entry* target.
     """
-    if now.weekday() == 6:  # Sunday — always run
+    if held:                 # never gate a position you hold
+        return False
+    if now.weekday() == 6:   # Sunday — always run
         return False
     pct = tc.tier2_min_price_proximity_pct if tc else None
     if pct is None:

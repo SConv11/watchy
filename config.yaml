@@ -34,9 +34,10 @@ watchlist:
   #   # Both keys required to enable; omit them to scan regardless of price.
   #   target_price: 180.0
   #   tier1_min_price_proximity_pct: 5.0
-  #   # Optional Tier 2 weekday gate (#15): skip the daily LLM pipeline when
-  #   # price is farther than N% from the target (manual target_price above, or
-  #   # the #16 auto-derived one). Sunday always runs. Omit to never gate.
+  #   # Optional Tier 2 weekday gate (#15): for a NON-held ticker, skip the daily
+  #   # LLM pipeline when price is farther than N% from the entry target (manual
+  #   # target_price above, or the #16 auto-derived one). Held tickers always run;
+  #   # Sunday always runs. Omit to never gate.
   #   tier2_min_price_proximity_pct: 8.0
 
 # Thresholds & cooldowns below are OPTIONAL — defaults are in code.

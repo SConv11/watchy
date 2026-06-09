@@ -32,10 +32,10 @@ Respond in this exact format:
 Ticker: {ticker}
 Decision: <BUY / SELL / TRIM / ADD / HOLD>
 Urgency: <HIGH / MEDIUM / LOW>
-Target: <the single most relevant price to act around — the entry/accumulation
-zone for a watch ticker, or the exit/trim level for a held one — as a number like
-215.50 (a range like 215-230 is fine). Write N/A only if the analysis gives no
-actionable level.>
+Target: <the entry / accumulation price level — where one would BUY or ADD to a
+position — as a number like 215.50 (a range like 215-230 is fine). This is NOT a
+stop-loss and NOT a take-profit; it's the level to watch for getting in. Write
+N/A if the analysis gives no actionable entry level.>
 
 Then write a detailed paragraph (5-8 sentences) covering:
   - Specific entry/exit price target or range, referencing levels from the analysis
