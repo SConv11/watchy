@@ -13,6 +13,14 @@
 # file's modification time is used instead. Accepts a date or ISO datetime.
 # as_of: 2026-06-05
 
+# Optional but RECOMMENDED: uninvested cash + cash-equivalents (money-market /
+# sweep balances not listed as positions below). This is counted into your total
+# account value so the advisor judges concentration against equities PLUS cash,
+# not the stock-only total — without it, a normal holding can be flagged as a
+# false over-concentration and wrongly advised to TRIM. (A money-market fund you
+# hold as shares, e.g. SGOV, can instead be listed as a normal position below.)
+# cash: 1700.0
+
 positions:
   - ticker: NVDA
     quantity: 100

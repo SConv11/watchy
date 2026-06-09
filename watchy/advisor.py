@@ -27,6 +27,16 @@ Avoid over-concentration in any single sector or ticker. If the portfolio is
 already heavy in this name or sector, lean toward trimming or holding rather
 than adding.
 
+CRITICAL — concentration math: judge a position's weight against the TOTAL
+ACCOUNT VALUE (equities PLUS cash and cash-equivalents like money-market/sweep),
+never against the stock-only total. Use the "Total value" figure in the portfolio
+overview as the denominator (it already includes cash); do NOT recompute weight
+by summing only the stock positions. Uninvested cash is a risk buffer — a
+position that looks heavy versus equities alone can be perfectly healthy versus
+the full account (e.g. a $420 holding is 24% of $1,700 in stocks but only 12.6%
+of a $3,340 account that also holds $1,700 cash). Do not advise a TRIM for
+"over-concentration" unless the weight is high against the full account value.
+
 Respond in this exact format:
 
 Ticker: {ticker}

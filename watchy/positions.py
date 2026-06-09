@@ -267,13 +267,40 @@ class FilePositionSource(PositionSource):
             self._resolve(pos)
         return positions
 
+    def _load_cash(self) -> float:
+        """Uninvested cash + cash-equivalents (money-market/sweep) from the file.
+
+        A top-level ``cash:`` field. Returns 0.0 when absent/non-numeric. This is
+        counted into the account's total value so concentration is judged against
+        equities PLUS cash, not the stock-only total (cash is a risk buffer).
+        """
+        if not self.path.exists():
+            return 0.0
+        try:
+            with open(self.path) as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception:  # noqa: BLE001
+            return 0.0
+        val = raw.get("cash")
+        if val is None:
+            return 0.0
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring non-numeric cash value in %s: %r", self.path, val)
+            return 0.0
+
     def get_account_summary(self) -> AccountSummary | None:
         positions = self.get_all_positions()
-        if not positions:
+        cash = self._load_cash()
+        if not positions and not cash:
             return None
-        total = sum(p.market_value for p in positions if p.market_value is not None)
+        stocks = sum(p.market_value for p in positions if p.market_value is not None)
         return AccountSummary(
-            account_id="manual", total_value=total, positions=positions,
+            account_id="manual",
+            total_value=stocks + cash,
+            cash_balance=cash if cash else None,
+            positions=positions,
         )
 
 

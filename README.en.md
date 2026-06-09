@@ -143,7 +143,7 @@ See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key se
 | `llm` | Advisor LLM config — supports Gemini, DeepSeek, OpenAI, Anthropic |
 | `telegram` | Telegram bot token and chat ID |
 | `schwab` | Schwab brokerage credentials (primary position source; auto-falls back to cache/manual file when unconfigured) |
-| `positions.yaml` | Manual positions file (final fallback, in `~/watchy_config/`, not committed); schema in `positions.example.yaml` |
+| `positions.yaml` | Manual positions file (final fallback, in `~/watchy_config/`, not committed); schema in `positions.example.yaml`. **Set the `cash:` field** (uninvested cash + cash-equivalents like money-market/SGOV) — it's counted into the account total so the advisor judges concentration against **Total Account Value (equities + cash)**, not the stock-only total, avoiding false "over-concentration" TRIM advice |
 
 > **Data fetching & caching:** market data is fetched via `yfinance` with a
 > `yfinance-cache` disk layer on top (smart caching — only the missing/stale bars

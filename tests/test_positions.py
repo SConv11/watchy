@@ -167,6 +167,67 @@ positions:
         summary = src.get_account_summary()
         assert summary.total_value == pytest.approx(1200.0 + 1000.0)
         assert summary.buying_power is None  # unknown for a file backend
+        assert summary.cash_balance is None  # no cash field → not reported
+
+    def test_account_summary_includes_cash_in_total(self, tmp_path, monkeypatch):
+        # Cash is counted into total value so concentration uses the full account.
+        path = _write_positions(tmp_path, """
+cash: 1700.0
+positions:
+  - ticker: EMR
+    quantity: 4
+    average_cost: 100.0
+    current_price: 105.0
+""")
+        src = FilePositionSource(path, enrich=False)
+        summary = src.get_account_summary()
+        assert summary.cash_balance == pytest.approx(1700.0)
+        # stocks = 420, + 1700 cash = 2120 total
+        assert summary.total_value == pytest.approx(420.0 + 1700.0)
+
+    def test_cash_only_no_positions(self, tmp_path, monkeypatch):
+        path = _write_positions(tmp_path, "cash: 500.0\n")
+        src = FilePositionSource(path, enrich=False)
+        summary = src.get_account_summary()
+        assert summary is not None
+        assert summary.total_value == pytest.approx(500.0)
+        assert summary.positions == []
+
+    def test_invalid_cash_ignored(self, tmp_path, monkeypatch):
+        path = _write_positions(tmp_path, """
+cash: "lots"
+positions:
+  - ticker: EMR
+    quantity: 4
+    average_cost: 100.0
+    current_price: 105.0
+""")
+        src = FilePositionSource(path, enrich=False)
+        summary = src.get_account_summary()
+        assert summary.cash_balance is None
+        assert summary.total_value == pytest.approx(420.0)
+
+    def test_concentration_weight_uses_full_account(self, tmp_path, monkeypatch):
+        # The user's scenario: $420 EMR, $1,280 other stocks ($1,700 equities),
+        # $1,640 cash → $3,340 account. EMR is 24.7% of stocks-only but a healthy
+        # 12.6% of the full account — render_portfolio must show the latter.
+        path = _write_positions(tmp_path, """
+cash: 1640.0
+positions:
+  - ticker: EMR
+    quantity: 4
+    average_cost: 100.0
+    current_price: 105.0
+  - ticker: NVDA
+    quantity: 8
+    average_cost: 150.0
+    current_price: 160.0
+""")
+        src = FilePositionSource(path, enrich=False)
+        text = render_portfolio(src.get_account_summary())
+        assert "12.6%" in text   # 420 / 3340, not 420 / 1700 (24.7%)
+        assert "24.7%" not in text
+        assert "Cash: $1,640.00" in text
 
 
 # --- PositionCache ---

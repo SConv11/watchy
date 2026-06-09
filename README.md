@@ -101,7 +101,7 @@ journalctl -u watchy -f  # 查看日志
 | `llm` | 顾问 LLM 配置——支持 Gemini、DeepSeek、OpenAI、Anthropic |
 | `telegram` | Telegram 机器人令牌（bot token）和聊天 ID |
 | `schwab` | Schwab 券商凭证（持仓数据主源；未配置时自动回退到缓存/手动文件） |
-| `positions.yaml` | 手动持仓文件（最终兜底，放 `~/watchy_config/`，不提交）；schema 见 `positions.example.yaml` |
+| `positions.yaml` | 手动持仓文件（最终兜底，放 `~/watchy_config/`，不提交）；schema 见 `positions.example.yaml`。**建议填 `cash:` 字段**（未投资现金 + 货币基金/SGOV 等现金等价物）——它会计入账户总值，让顾问按 **总账户价值（股票 + 现金）** 而非仅股票市值来判断集中度，避免把正常持仓误判为「过度集中」而错误建议 TRIM |
 
 > **数据获取与缓存**：行情通过 `yfinance` 获取，并叠加 `yfinance-cache` 磁盘缓存层
 > （智能缓存，仅拉取缺失/过期的 bar），减少对 Yahoo 的重复请求。缓存层为可选依赖——
