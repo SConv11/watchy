@@ -153,9 +153,21 @@ Analysts launching: market, sentiment, news
 Analysis Complete — $NVDA
 Trigger: Golden Cross (50MA ↑ 200MA)
 Verdict: 🟢 BUY (4 analysts)
-Recommendation: moderate bullish, accumulate on pullback
-Risk: medium — sector rotation risk
 
+📋 Trader Plan
+Action: Buy. Disciplined accumulation on pullbacks; AWS/AI thesis
+intact, near-term momentum mixed. (shown in full)
+
+⚖️ Risk / Final Call
+Rating: Overweight. Initiate half-size at ~$246, hard stop $229.50,
+targets $274/$300/$317. (shown in full)
+```
+
+> 分析完成的消息只保留两块**已消化**的内容——交易员计划（Trader Plan）与组合经理的
+> 最终判定（Risk / Final Call），**完整不截断**（超长由分块发送）。各分析师的原始报告
+> 不再塞进消息正文，而是作为完整的 `.md` 报告附件发送。持仓 + 顾问建议在**另一条**消息里：
+
+```
 Your Position:
 Current position in NVDA:
   Shares: 50  Average cost: $98.40

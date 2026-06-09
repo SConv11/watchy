@@ -206,8 +206,8 @@ def run_pipeline(
                 a stub that logs what would have run.
 
     Returns:
-        Dict with keys: ticker, analysts_run, recommendations, risk_assessment,
-        summary.
+        Dict with keys: ticker, analysts_run, recommendations, trader_plan,
+        risk_assessment, summary.
     """
     analysts_list = _analyst_names(spec.analysts)
     logger.info(

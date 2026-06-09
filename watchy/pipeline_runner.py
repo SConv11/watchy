@@ -338,13 +338,15 @@ def _format_result(
     elif isinstance(decision, str):
         decision_text = decision
 
-    # Extract risk assessment from risk debate state.
+    # Extract risk assessment from risk debate state. This is the Portfolio
+    # Manager's final call (rating + entry/stop/targets); the notification shows
+    # it in full and chunks it if needed, so no truncation here.
     risk_assessment = None
     risk_state = final_state.get("risk_debate_state", {})
     if risk_state:
         judge = risk_state.get("judge_decision", "")
         if judge:
-            risk_assessment = str(judge)[:500]
+            risk_assessment = str(judge).strip()
 
     # Summary: combine trader plan + final decision.
     trader_plan = final_state.get("trader_investment_plan", "")
@@ -376,6 +378,10 @@ def _format_result(
         "debate": spec.debate.value,
         "risk_mode": spec.risk.value,
         "recommendations": recommendations,
+        # The Trader's concrete plan (action + entry/stop/targets), shown in the
+        # notification in full alongside the Risk / Final Call. Distinct from the
+        # Portfolio Manager decision in risk_assessment.
+        "trader_plan": str(trader_plan).strip() if trader_plan else "",
         "risk_assessment": risk_assessment,
         "summary": "\n\n".join(summary_parts) if summary_parts else "Analysis complete.",
         # Full reports for downstream consumers (advisor, notifications).

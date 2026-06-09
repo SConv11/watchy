@@ -161,12 +161,10 @@ class TelegramNotifier:
         is sent as a document attachment.
         """
         esc = self._escape_html
-        recs = result.get("recommendations", [])
-        rec_text = esc(", ".join(recs) if recs else "no actionable recommendation")
-        risk = esc(result.get("risk_assessment") or "not assessed")
-        summary = result.get("summary", "")
         verdict = result.get("verdict", "")
         analyst_count = result.get("analyst_count")
+        trader_plan = (result.get("trader_plan") or "").strip()
+        risk = (result.get("risk_assessment") or "").strip()
 
         lines = [
             f"<b>Analysis Complete</b> — ${ticker}",
@@ -177,14 +175,21 @@ class TelegramNotifier:
             icon = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(verdict, "")
             suffix = f" ({analyst_count} analysts)" if analyst_count else ""
             lines.append(f"<b>Verdict:</b> {icon} <b>{esc(verdict)}</b>{suffix}")
-        lines += [
-            f"<b>Recommendation:</b> {rec_text}",
-            f"<b>Risk:</b> {risk}",
-        ]
-        if summary:
-            # #3: give the summary more room now that #11 chunks long messages.
-            short = esc(summary[:400] + "..." if len(summary) > 400 else summary)
-            lines.append(f"<b>Summary:</b> {short}")
+
+        # The two digested blocks, in full: the Trader's plan and the Portfolio
+        # Manager's final call. Raw analyst reports are intentionally omitted —
+        # they're in the attached .md. No per-field truncation: long blocks are
+        # chunked across messages by _split_message.
+        if trader_plan:
+            lines += ["", "<b>📋 Trader Plan</b>", esc(trader_plan)]
+        if risk:
+            lines += ["", "<b>⚖️ Risk / Final Call</b>", esc(risk)]
+        # Sparse pipelines (e.g. market-only Tier 1) may produce neither; fall
+        # back to the summary so the message isn't just a bare verdict.
+        if not trader_plan and not risk:
+            summary = (result.get("summary") or "").strip()
+            if summary:
+                lines += ["", "<b>Summary</b>", esc(summary)]
 
         ok = self.send("\n".join(lines))
 

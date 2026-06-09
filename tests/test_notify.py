@@ -154,14 +154,43 @@ class TestPipelineResultContent:
             notifier.pipeline_result("AAPL", "golden_cross", result)
         assert "Verdict:" not in self._sent_text(mock_post)
 
-    def test_summary_allows_400_chars(self):
+    def test_trader_plan_and_risk_rendered_in_full(self):
         notifier = self._notifier()
-        summary = "A" * 350  # between old 200 and new 400 cap → not truncated
-        result = {"summary": summary, "recommendations": []}
+        plan = "P" * 800
+        risk = "R" * 800
+        result = {"trader_plan": plan, "risk_assessment": risk, "recommendations": []}
         with patch.object(notifier, "_post", return_value=True) as mock_post:
             notifier.pipeline_result("AAPL", "golden_cross", result)
         text = self._sent_text(mock_post)
-        assert "A" * 350 in text  # full 350 present, not cut at 200
+        # Both digested blocks present in full — no 300/400/500-char truncation.
+        assert plan in text
+        assert risk in text
+        assert "Trader Plan" in text
+        assert "Risk / Final Call" in text
+
+    def test_raw_analyst_reports_not_in_message(self):
+        notifier = self._notifier()
+        result = {
+            "verdict": "BUY",
+            "analyst_count": 2,
+            "recommendations": ["[Market] raw analyst dump that should not appear"],
+            "trader_plan": "Action: Buy.",
+            "risk_assessment": "Rating: Overweight.",
+        }
+        with patch.object(notifier, "_post", return_value=True) as mock_post:
+            notifier.pipeline_result("AAPL", "golden_cross", result)
+        text = self._sent_text(mock_post)
+        assert "raw analyst dump" not in text
+        assert "Recommendation:" not in text
+
+    def test_falls_back_to_summary_when_no_plan_or_risk(self):
+        notifier = self._notifier()
+        result = {"verdict": "HOLD", "analyst_count": 1, "summary": "S" * 350,
+                  "recommendations": []}
+        with patch.object(notifier, "_post", return_value=True) as mock_post:
+            notifier.pipeline_result("AAPL", "golden_cross", result)
+        text = self._sent_text(mock_post)
+        assert "S" * 350 in text  # full summary, untruncated
 
     def test_advice_sent_as_separate_message(self):
         notifier = self._notifier()
@@ -191,9 +220,8 @@ class TestPipelineResultContent:
         result = {
             "verdict": "SELL",
             "analyst_count": 4,
-            "recommendations": ["[Market] " + "x" * 5000],  # force >4096
+            "trader_plan": "x" * 5000,  # force >4096
             "risk_assessment": "r",
-            "summary": "s",
         }
         with patch.object(notifier, "_post", return_value=True) as mock_post:
             ok = notifier.pipeline_result("AAPL", "death_cross", result)
