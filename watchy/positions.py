@@ -267,39 +267,53 @@ class FilePositionSource(PositionSource):
             self._resolve(pos)
         return positions
 
-    def _load_cash(self) -> float:
-        """Uninvested cash + cash-equivalents (money-market/sweep) from the file.
+    def _load_account_fields(self) -> tuple[float | None, float | None]:
+        """``(total_account_value, cash)`` from the file; None each if absent/bad.
 
-        A top-level ``cash:`` field. Returns 0.0 when absent/non-numeric. This is
-        counted into the account's total value so concentration is judged against
-        equities PLUS cash, not the stock-only total (cash is a risk buffer).
+        ``total_account_value`` is the preferred, authoritative input — the single
+        figure you read straight off your broker (equities + cash + equivalents),
+        used directly as the concentration denominator. ``cash`` is the
+        alternative: state just the buffer and let Watchy add it to the live stock
+        value. Both feed the account total so concentration is judged against the
+        full account, not the stock-only sum.
         """
         if not self.path.exists():
-            return 0.0
+            return None, None
         try:
             with open(self.path) as f:
                 raw = yaml.safe_load(f) or {}
         except Exception:  # noqa: BLE001
-            return 0.0
-        val = raw.get("cash")
-        if val is None:
-            return 0.0
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            logger.warning("Ignoring non-numeric cash value in %s: %r", self.path, val)
-            return 0.0
+            return None, None
+        return _coerce_float(raw.get("total_account_value")), _coerce_float(raw.get("cash"))
 
     def get_account_summary(self) -> AccountSummary | None:
         positions = self.get_all_positions()
-        cash = self._load_cash()
-        if not positions and not cash:
-            return None
+        explicit_total, cash = self._load_account_fields()
+        cash = cash or 0.0
         stocks = sum(p.market_value for p in positions if p.market_value is not None)
+
+        if explicit_total is not None and explicit_total >= stocks:
+            # Authoritative account total wins; the remainder above equities is the
+            # cash buffer, surfaced for the advisor's concentration math.
+            total = explicit_total
+            buffer = explicit_total - stocks
+            cash_balance = buffer if buffer > 0 else None
+        else:
+            if explicit_total is not None:
+                logger.warning(
+                    "total_account_value (%.2f) below stock value (%.2f) in %s — "
+                    "ignoring it, using equities + cash",
+                    explicit_total, stocks, self.path,
+                )
+            total = stocks + cash
+            cash_balance = cash if cash else None
+
+        if not positions and not total:
+            return None
         return AccountSummary(
             account_id="manual",
-            total_value=stocks + cash,
-            cash_balance=cash if cash else None,
+            total_value=total,
+            cash_balance=cash_balance,
             positions=positions,
         )
 
@@ -342,6 +356,17 @@ class PositionCache:
         except Exception:  # noqa: BLE001
             logger.exception("Failed to read position cache %s", self.path)
             return None
+
+
+def _coerce_float(val: Any) -> float | None:
+    """Best-effort float from a YAML scalar; None (with a warning) on non-numeric."""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring non-numeric account value: %r", val)
+        return None
 
 
 def _parse_as_of(val: Any) -> datetime | None:

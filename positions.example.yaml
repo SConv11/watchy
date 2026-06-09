@@ -13,13 +13,21 @@
 # file's modification time is used instead. Accepts a date or ISO datetime.
 # as_of: 2026-06-05
 
-# Optional but RECOMMENDED: uninvested cash + cash-equivalents (money-market /
-# sweep balances not listed as positions below). This is counted into your total
-# account value so the advisor judges concentration against equities PLUS cash,
-# not the stock-only total — without it, a normal holding can be flagged as a
-# false over-concentration and wrongly advised to TRIM. (A money-market fund you
-# hold as shares, e.g. SGOV, can instead be listed as a normal position below.)
-# cash: 1700.0
+# RECOMMENDED — lets the advisor size concentration against your FULL account, not
+# the stock-only total. Without it, a normal holding can be flagged as false
+# "over-concentration" and wrongly advised to TRIM. Provide ONE of:
+#
+#   total_account_value — your full account value (equities + cash + cash-
+#     equivalents), the single figure you read off your broker. Authoritative:
+#     used directly as the denominator for position weights. PREFERRED.
+# total_account_value: 3340.0
+#
+#   cash — the alternative: state just your uninvested cash + money-market/sweep
+#     buffer and let Watchy add it to the live stock value.
+# cash: 1640.0
+#
+# (total_account_value wins if both are set. A money-market fund you hold as
+# shares, e.g. SGOV, can instead be listed as a normal position below.)
 
 positions:
   - ticker: NVDA

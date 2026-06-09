@@ -207,6 +207,62 @@ positions:
         assert summary.cash_balance is None
         assert summary.total_value == pytest.approx(420.0)
 
+    def test_total_account_value_is_authoritative(self, tmp_path, monkeypatch):
+        # Preferred input: a single account-total figure used directly as the
+        # denominator; the buffer above equities surfaces as cash.
+        path = _write_positions(tmp_path, """
+total_account_value: 3340.0
+positions:
+  - ticker: EMR
+    quantity: 4
+    average_cost: 100.0
+    current_price: 105.0
+  - ticker: NVDA
+    quantity: 8
+    average_cost: 150.0
+    current_price: 160.0
+""")
+        src = FilePositionSource(path, enrich=False)
+        summary = src.get_account_summary()
+        assert summary.total_value == pytest.approx(3340.0)
+        assert summary.cash_balance == pytest.approx(1640.0)  # 3340 - 1700 equities
+        assert "12.6%" in render_portfolio(summary)  # EMR 420 / 3340
+
+    def test_total_account_value_wins_over_cash(self, tmp_path, monkeypatch):
+        path = _write_positions(tmp_path, """
+total_account_value: 3340.0
+cash: 999.0
+positions:
+  - ticker: EMR
+    quantity: 4
+    average_cost: 100.0
+    current_price: 105.0
+""")
+        summary = FilePositionSource(path, enrich=False).get_account_summary()
+        assert summary.total_value == pytest.approx(3340.0)  # not 420 + 999
+
+    def test_total_account_value_below_stocks_ignored(self, tmp_path, monkeypatch):
+        # An inconsistent total (< equities) is dropped rather than producing
+        # >100% weights; falls back to equities (+ cash if any).
+        path = _write_positions(tmp_path, """
+total_account_value: 100.0
+positions:
+  - ticker: EMR
+    quantity: 4
+    average_cost: 100.0
+    current_price: 105.0
+""")
+        summary = FilePositionSource(path, enrich=False).get_account_summary()
+        assert summary.total_value == pytest.approx(420.0)
+
+    def test_total_account_value_cash_only(self, tmp_path, monkeypatch):
+        path = _write_positions(tmp_path, "total_account_value: 500.0\n")
+        summary = FilePositionSource(path, enrich=False).get_account_summary()
+        assert summary is not None
+        assert summary.total_value == pytest.approx(500.0)
+        assert summary.cash_balance == pytest.approx(500.0)
+        assert summary.positions == []
+
     def test_concentration_weight_uses_full_account(self, tmp_path, monkeypatch):
         # The user's scenario: $420 EMR, $1,280 other stocks ($1,700 equities),
         # $1,640 cash → $3,340 account. EMR is 24.7% of stocks-only but a healthy
