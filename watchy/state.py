@@ -46,6 +46,8 @@ class StateStore:
                 prev_volume_anomaly INTEGER,
                 prev_atr_spike INTEGER,
                 last_full_analysis_ts TEXT,            -- ISO timestamp of last Tier 2 run
+                derived_target_price REAL,             -- auto-derived target from analysis (#16)
+                derived_target_ts TEXT,                -- when the derived target was last set
                 updated_ts TEXT                        -- last update timestamp
             );
 
@@ -90,6 +92,9 @@ class StateStore:
             "prev_bollinger_below_lower": "INTEGER",
             "prev_volume_anomaly": "INTEGER",
             "prev_atr_spike": "INTEGER",
+            # #16 auto-derived Tier 2 proximity target (and its freshness stamp).
+            "derived_target_price": "REAL",
+            "derived_target_ts": "TEXT",
         }
         with self._lock:
             existing = {

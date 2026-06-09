@@ -15,13 +15,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from watchy.advisor import get_advice
-from watchy.config import WatchyConfig
+from watchy.advisor import get_advice, parse_price
+from watchy.config import TickerConfig, WatchyConfig
 from watchy.indicators import compute_indicators
 from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
 from watchy.orchestrator import get_scheduled_spec, run_pipeline
 from watchy.positions import get_position_source
+from watchy.proximity import is_outside_proximity
 from watchy.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -70,11 +71,14 @@ def _run_ticker(
     ticker_locks: TickerLockRegistry | None = None,
 ) -> dict[str, Any]:
     logger.info("Tier 2: %s", ticker)
+    now = datetime.now(timezone.utc)
 
     # enrich with indicators for stage context
     bundle = compute_indicators(ticker)
     stage_context = {}
+    price = None
     if bundle is not None:
+        price = bundle.current_price
         stage_context = {
             "sepa_stage": bundle.sepa_stage,
             "current_price": bundle.current_price,
@@ -83,11 +87,25 @@ def _run_ticker(
             "rsi": bundle.rsi,
         }
 
+    # Tier 2 price-proximity gate (#15): on weekdays, skip the expensive LLM
+    # pipeline for a watch ticker trading far from its (manual or auto-derived)
+    # target. Sunday is always run (weekly full update); held names you always
+    # want analysed simply don't set tier2_min_price_proximity_pct.
+    tc = config.get_ticker_config(ticker)
+    state = store.get_ticker_state(ticker)
+    if _should_skip_tier2(price, tc, state, now):
+        target = _effective_target(tc, state)
+        logger.info(
+            "Tier 2 skip %s — price %.2f outside %.2f%% of target %.2f (weekday gate)",
+            ticker, price, tc.tier2_min_price_proximity_pct, target,
+        )
+        return {"ticker": ticker, "skipped": "out_of_proximity", "target": target}
+
     # Serialize against a concurrent Tier 1 pipeline for the same ticker.
     from contextlib import nullcontext
     lock = ticker_locks.get(ticker) if ticker_locks else nullcontext()
 
-    spec = get_scheduled_spec(datetime.now(timezone.utc))
+    spec = get_scheduled_spec(now)
 
     with lock:
         run_id = store.start_run(ticker, "tier2", "scheduled_daily")
@@ -103,6 +121,19 @@ def _run_ticker(
             position_text = position_source.format_position_context(ticker)
             advice = get_advice(ticker, result, position_source, config)
 
+            # Auto-derive the Tier 2 proximity target (#16) from the advisor's
+            # Target field, so the gate self-maintains. Manual config.target_price
+            # still wins at read time (see _effective_target); this only fills the
+            # derived slot used when no manual target is set.
+            if advice:
+                derived = parse_price(advice.get("target"))
+                if derived is not None:
+                    store.save_ticker_state(
+                        ticker,
+                        derived_target_price=derived,
+                        derived_target_ts=_now_iso(),
+                    )
+
             notifier.pipeline_result(
                 ticker, "scheduled_daily", result,
                 position_text=position_text,
@@ -114,6 +145,38 @@ def _run_ticker(
             raise
 
 
+def _effective_target(
+    tc: TickerConfig | None, state: dict[str, Any]
+) -> float | None:
+    """The target price the Tier 2 gate measures against.
+
+    Manual ``config.target_price`` wins; otherwise the #16 auto-derived target
+    stored in ``ticker_state``. None when neither exists (→ ticker not gated).
+    """
+    if tc is not None and tc.target_price is not None:
+        return tc.target_price
+    return state.get("derived_target_price")
+
+
+def _should_skip_tier2(
+    price: float | None,
+    tc: TickerConfig | None,
+    state: dict[str, Any],
+    now: datetime,
+) -> bool:
+    """Whether Tier 2 should skip this ticker on this day (#15).
+
+    Sunday is never gated (weekly full run). Otherwise skip only when the ticker
+    opts in via tier2_min_price_proximity_pct and price is outside that band of
+    the effective target.
+    """
+    if now.weekday() == 6:  # Sunday — always run
+        return False
+    pct = tc.tier2_min_price_proximity_pct if tc else None
+    if pct is None:
+        return False
+    return is_outside_proximity(price, _effective_target(tc, state), pct)
+
+
 def _now_iso() -> str:
-    from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()

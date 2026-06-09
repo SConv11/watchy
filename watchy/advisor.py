@@ -32,6 +32,10 @@ Respond in this exact format:
 Ticker: {ticker}
 Decision: <BUY / SELL / TRIM / ADD / HOLD>
 Urgency: <HIGH / MEDIUM / LOW>
+Target: <the single most relevant price to act around — the entry/accumulation
+zone for a watch ticker, or the exit/trim level for a held one — as a number like
+215.50 (a range like 215-230 is fine). Write N/A only if the analysis gives no
+actionable level.>
 
 Then write a detailed paragraph (5-8 sentences) covering:
   - Specific entry/exit price target or range, referencing levels from the analysis
@@ -121,6 +125,7 @@ def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
         "ticker": fallback_ticker,
         "decision": "",
         "urgency": "",
+        "target": "",
         "detail": "",
     }
 
@@ -128,7 +133,7 @@ def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
     # stopping at the first non-header line — the model sometimes emits a blank
     # line or a short preamble before "Decision:", which previously dropped the
     # decision/urgency entirely. Non-header lines become the detail paragraph.
-    got = {"ticker": False, "decision": False, "urgency": False}
+    got = {"ticker": False, "decision": False, "urgency": False, "target": False}
     detail_lines: list[str] = []
     for line in raw.split("\n"):
         stripped = line.strip()
@@ -144,11 +149,34 @@ def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
         elif not got["urgency"] and low.startswith("urgency:"):
             parsed["urgency"] = stripped.split(":", 1)[1].strip().upper()
             got["urgency"] = True
+        elif not got["target"] and low.startswith("target:"):
+            # Captured as a header so it doesn't pollute the detail paragraph;
+            # the numeric value (for #16's auto-target) is parsed via parse_price.
+            parsed["target"] = stripped.split(":", 1)[1].strip()
+            got["target"] = True
         elif stripped:
             detail_lines.append(stripped)
 
     parsed["detail"] = " ".join(detail_lines)
     return parsed
+
+
+def parse_price(text: str | None) -> float | None:
+    """Extract a numeric price from an advisor ``Target:`` value.
+
+    Handles ``$215.50``, ``215.50``, ``215-230`` (→ midpoint), ``$3,000`` and
+    returns None for ``N/A`` / empty / no-number strings. A range averages the
+    first two numbers; a single value is returned as-is.
+    """
+    import re
+
+    if not text:
+        return None
+    nums = re.findall(r"\d+(?:\.\d+)?", text.replace(",", ""))
+    if not nums:
+        return None
+    vals = [float(n) for n in nums[:2]]
+    return sum(vals) / len(vals)
 
 
 def _format_analysis(result: dict[str, Any]) -> str:

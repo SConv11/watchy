@@ -26,6 +26,7 @@ from watchy.orchestrator import (
     run_pipeline,
 )
 from watchy.positions import get_position_source
+from watchy.proximity import is_outside_proximity
 from watchy.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -98,17 +99,16 @@ def _nullcontext():
 
 
 def _is_outside_proximity(price: float | None, tc: TickerConfig | None) -> bool:
-    """True if a target/proximity is configured and price is too far from target.
+    """Tier 1 wrapper over the shared proximity gate, using the Tier 1 percent.
 
     Returns False (never skip) when the feature isn't configured for this ticker,
     when there's no price, or on a non-positive target.
     """
-    if tc is None or tc.target_price is None or tc.tier1_min_price_proximity_pct is None:
+    if tc is None:
         return False
-    if not price or tc.target_price <= 0:
-        return False
-    distance_pct = abs(price - tc.target_price) / tc.target_price * 100
-    return distance_pct > tc.tier1_min_price_proximity_pct
+    return is_outside_proximity(
+        price, tc.target_price, tc.tier1_min_price_proximity_pct
+    )
 
 
 def _handle_signal(

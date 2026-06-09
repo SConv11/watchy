@@ -36,6 +36,8 @@
 
 **Tier 2（第二层）**在配置的 UTC 时间运行（**周一–五 + 周日**，周六跳过，因与周日运行冗余）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
 
+**Tier 2 价格邻近门控（price-proximity gate，#15，按票可选）**：给某只票设置 `tier2_min_price_proximity_pct` 后，**工作日**若现价离目标价超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）；**周日永远运行**（每周一次完整更新，含新闻）。这是 watch-only（非持仓）远离入场区的票的成本开关——持仓且想每天分析的票不设此项即可。目标价优先用手动 `target_price`，否则用 **自动推导的目标价（#16）**：每次 Tier 2 运行时，从顾问输出的 `Target:` 字段提取并存入 `state.db`，免去手动维护 `target_price` 而失效的问题（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
+
 **每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将分析报告与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。
 
 **持仓数据源（position source，#4）是分层的，保证 Schwab 无法刷新时仍可用**：
@@ -92,7 +94,7 @@ journalctl -u watchy -f  # 查看日志
 
 | 配置项 | 用途 |
 |--------|------|
-| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间，以及可选的价格邻近过滤（`target_price` + `tier1_min_price_proximity_pct`：仅当现价在目标价 N% 以内才扫该票） |
+| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间，以及可选的价格邻近过滤：`target_price` + `tier1_min_price_proximity_pct`（Tier 1，仅当现价在目标价 N% 以内才扫该票）和 `tier2_min_price_proximity_pct`（Tier 2 工作日门控，#15；目标价缺省时用 #16 自动推导值，周日不门控） |
 | `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
 | `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
 | `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |

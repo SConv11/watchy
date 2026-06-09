@@ -20,6 +20,12 @@ class TickerConfig:
     # tier1_min_price_proximity_pct percent of target_price.
     target_price: float | None = None
     tier1_min_price_proximity_pct: float | None = None
+    # Optional per-ticker Tier 2 price-proximity gate (#15). When set, the daily
+    # LLM pipeline is skipped on *weekdays* if the current price is farther than
+    # this percent from the effective target (manual target_price, else the
+    # auto-derived one from #16). Sunday always runs (weekly full update). Opt-in
+    # per ticker — leave unset for held names you always want analysed.
+    tier2_min_price_proximity_pct: float | None = None
 
 
 @dataclass
