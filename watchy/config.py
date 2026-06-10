@@ -19,12 +19,13 @@ class TickerConfig:
     # gate (#15) as the effective target when set (else the #16 auto-derived one).
     # Tier 1 is never proximity-gated.
     target_price: float | None = None
-    # Optional per-ticker Tier 2 price-proximity gate (#15). When set, the daily
-    # LLM pipeline is skipped on *weekdays* if the current price is farther than
-    # this percent from the effective target (manual target_price, else the
-    # auto-derived one from #16). Sunday always runs (weekly full update). Opt-in
-    # per ticker — leave unset for held names you always want analysed.
-    tier2_min_price_proximity_pct: float | None = None
+    # Optional per-ticker override of the Tier 2 price-proximity gate (#15). When
+    # set (or inherited from the global WatchyConfig.min_price_proximity_pct), the
+    # daily LLM pipeline is skipped on *weekdays* if the current price is farther
+    # than this percent from the effective target (manual target_price, else the
+    # #16 auto-derived one). Sunday and held tickers always run. A value here
+    # overrides the global default for this ticker.
+    min_price_proximity_pct: float | None = None
 
 
 @dataclass
@@ -83,6 +84,10 @@ class WatchyConfig:
     # Seconds to sleep between tickers in a Tier 2 daily scan, to avoid a
     # burst of yfinance requests tripping rate limits (#1).
     tier2_throttle_s: float = 2.0
+    # Global default for the Tier 2 price-proximity gate (#15), applied to every
+    # watch-only ticker that doesn't set its own min_price_proximity_pct. None
+    # disables the gate globally. Held tickers and Sunday are never gated.
+    min_price_proximity_pct: float | None = None
 
     def get_ticker_config(self, ticker: str) -> TickerConfig | None:
         """Return the TickerConfig for a symbol (case-insensitive), or None."""
@@ -116,6 +121,7 @@ class WatchyConfig:
             log_level=raw.get("log_level", "INFO"),
             log_file=raw.get("log_file", "~/watchy/watchy.log"),
             tier2_throttle_s=raw.get("tier2_throttle_s", 2.0),
+            min_price_proximity_pct=raw.get("min_price_proximity_pct"),
         )
 
 

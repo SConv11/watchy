@@ -36,7 +36,7 @@
 
 **Tier 2（第二层）**在配置的 UTC 时间运行（**周一–五 + 周日**，周六跳过，因与周日运行冗余）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
 
-**Tier 2 价格邻近门控（price-proximity gate，#15，按票可选）**：给某只票设置 `tier2_min_price_proximity_pct` 后，**工作日**若现价离 **入场目标价（entry target）** 超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）。门控只针对 **watch-only（非持仓）** 的票：**只要当前持有该票（position source 查到非零持仓），Tier 2 永远运行**——有资金敞口就值得每天分析，与价格无关（持仓查询出错时也按"持有"处理，宁可多跑）。**周日永远运行**（每周一次完整更新，含新闻）。入场目标价优先用手动 `target_price`，否则用 **自动推导值（#16）**：每次 Tier 2 运行时从顾问输出的结构化 `Target:` 字段提取（语义明确为"建仓/加仓的入场价"，不是止损也不是止盈）并存入 `state.db`（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
+**Tier 2 价格邻近门控（price-proximity gate，#15）**：用顶层 `min_price_proximity_pct` 设一个**全局默认**百分比（自动套到所有 watch-only 票；也可在长表里按票用同名键 `min_price_proximity_pct` 覆盖），**工作日**若现价离 **入场目标价（entry target）** 超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）。门控只针对 **watch-only（非持仓）** 的票：**只要当前持有该票（position source 查到非零持仓），Tier 2 永远运行**——有资金敞口就值得每天分析，与价格无关（持仓查询出错时也按"持有"处理，宁可多跑）。**周日永远运行**（每周一次完整更新，含新闻）。入场目标价优先用手动 `target_price`，否则用 **自动推导值（#16）**：每次 Tier 2 运行时从顾问输出的结构化 `Target:` 字段提取（语义明确为"建仓/加仓的入场价"，不是止损也不是止盈）并存入 `state.db`（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
 
 **每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将分析报告与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。
 
@@ -94,7 +94,8 @@ journalctl -u watchy -f  # 查看日志
 
 | 配置项 | 用途 |
 |--------|------|
-| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间，以及可选的 `target_price` + `tier2_min_price_proximity_pct`（Tier 2 工作日门控，#15；目标价缺省时用 #16 自动推导值，持仓票与周日永不门控）。Tier 1 不做邻近门控，交易时段内始终扫描 |
+| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间、可选的 `target_price`，以及按票覆盖的 `min_price_proximity_pct`（Tier 2 工作日门控，#15，默认取顶层全局值；目标价缺省时用 #16 自动推导值，持仓票与周日永不门控）。Tier 1 不做邻近门控，交易时段内始终扫描 |
+| `min_price_proximity_pct` | Tier 2 邻近门控（#15）的**全局默认**百分比，套到所有 watch-only（非持仓）票；工作日现价离入场目标价超过该值就跳过当日 LLM。持仓票与周日永不门控，Tier 1 不受影响。可按票用同名键覆盖；删除/留空即全局关闭 |
 | `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
 | `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
 | `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |

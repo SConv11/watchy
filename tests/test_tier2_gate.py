@@ -7,7 +7,12 @@ from types import SimpleNamespace
 from watchy.advisor import _parse_advice, parse_price
 from watchy.config import TickerConfig
 from watchy.proximity import is_outside_proximity
-from watchy.tier2 import _effective_target, _is_held, _should_skip_tier2
+from watchy.tier2 import (
+    _effective_proximity_pct,
+    _effective_target,
+    _is_held,
+    _should_skip_tier2,
+)
 
 # 2026-06-08 is a Monday (weekday 0); 2026-06-07 is a Sunday (weekday 6).
 MONDAY = datetime(2026, 6, 8, tzinfo=timezone.utc)
@@ -51,7 +56,7 @@ class TestEffectiveTarget:
 
 class TestShouldSkipTier2:
     def _tc(self, **kw):
-        return TickerConfig(ticker="AAPL", tier2_min_price_proximity_pct=5.0, **kw)
+        return TickerConfig(ticker="AAPL", min_price_proximity_pct=5.0, **kw)
 
     def test_weekday_far_not_held_skips(self):
         tc = self._tc(target_price=180.0)
@@ -86,6 +91,49 @@ class TestShouldSkipTier2:
 
     def test_no_ticker_config(self):
         assert _should_skip_tier2(210.0, None, {}, MONDAY, held=False) is False
+
+    def test_global_default_applies_without_per_ticker(self):
+        # no per-ticker pct, but a global default → gate applies on a weekday
+        tc = TickerConfig(ticker="AAPL", target_price=180.0)
+        assert _should_skip_tier2(
+            210.0, tc, {}, MONDAY, held=False, global_pct=5.0
+        ) is True
+
+    def test_per_ticker_overrides_global(self):
+        # per-ticker 50% is lenient: 210 vs 180 (16.7%) is inside → runs, even
+        # though the global 5% would have skipped it
+        tc = TickerConfig(ticker="AAPL", target_price=180.0, min_price_proximity_pct=50.0)
+        assert _should_skip_tier2(
+            210.0, tc, {}, MONDAY, held=False, global_pct=5.0
+        ) is False
+
+    def test_held_ignores_global_default(self):
+        tc = TickerConfig(ticker="AAPL", target_price=180.0)
+        assert _should_skip_tier2(
+            210.0, tc, {}, MONDAY, held=True, global_pct=5.0
+        ) is False
+
+    def test_sunday_ignores_global_default(self):
+        tc = TickerConfig(ticker="AAPL", target_price=180.0)
+        assert _should_skip_tier2(
+            210.0, tc, {}, SUNDAY, held=False, global_pct=5.0
+        ) is False
+
+
+class TestEffectiveProximityPct:
+    def test_per_ticker_wins(self):
+        tc = TickerConfig(ticker="AAPL", min_price_proximity_pct=12.0)
+        assert _effective_proximity_pct(tc, 8.0) == 12.0
+
+    def test_global_when_no_per_ticker(self):
+        assert _effective_proximity_pct(TickerConfig(ticker="AAPL"), 8.0) == 8.0
+
+    def test_none_when_neither(self):
+        assert _effective_proximity_pct(TickerConfig(ticker="AAPL"), None) is None
+        assert _effective_proximity_pct(None, None) is None
+
+    def test_global_when_tc_none(self):
+        assert _effective_proximity_pct(None, 8.0) == 8.0
 
 
 class TestIsHeld:

@@ -48,8 +48,9 @@ four-analyst pipeline (Market + Sentiment + News + Fundamentals) with a Bull/Bea
 debate. Risk-management depth is day-of-week dependent: **simplified on weekdays,
 escalated to the full 3-way risk debate on Sundays.**
 
-**Tier 2 price-proximity gate (#15, opt-in per ticker):** set
-`tier2_min_price_proximity_pct` on a ticker and, **on weekdays**, the expensive
+**Tier 2 price-proximity gate (#15):** set a **global default** percent via the
+top-level `min_price_proximity_pct` (applied to every watch-only ticker; a
+per-ticker `min_price_proximity_pct` overrides it). **On weekdays**, the expensive
 LLM pipeline is skipped when the current price is farther than that percent from
 the **entry target** (saving DeepSeek cost). The gate is **watch-only**: **a
 ticker you currently hold (the position source reports a non-zero position) is
@@ -136,7 +137,8 @@ See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key se
 
 | Setting | Purpose |
 |---------|---------|
-| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, and optional `target_price` + `tier2_min_price_proximity_pct` (Tier 2 weekday gate, #15; falls back to the #16 auto-derived target, never gated on Sunday or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
+| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 weekday gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on Sunday or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
+| `min_price_proximity_pct` | **Global default** percent for the Tier 2 proximity gate (#15), applied to every watch-only (non-held) ticker; on weekdays skip the daily LLM when price is farther than this from the entry target. Held tickers and Sunday always run; Tier 1 is unaffected. Override per-ticker with the same key. Remove to disable globally. |
 | `signal_thresholds` | Detection thresholds for RSI, volume, ATR, etc. |
 | `cooldown` | Per-signal cooldown window to suppress repeat pushes |
 | `tier2_throttle_s` | Seconds to sleep between tickers in a Tier 2 daily scan (default 2.0), to smooth yfinance requests and avoid rate limits |

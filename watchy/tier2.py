@@ -96,12 +96,13 @@ def _run_ticker(
     state = store.get_ticker_state(ticker)
     position_source = get_position_source(config)
     held = _is_held(position_source, ticker)
-    if _should_skip_tier2(price, tc, state, now, held):
+    if _should_skip_tier2(price, tc, state, now, held, config.min_price_proximity_pct):
         target = _effective_target(tc, state)
+        pct = _effective_proximity_pct(tc, config.min_price_proximity_pct)
         logger.info(
             "Tier 2 skip %s — not held, price %.2f outside %.2f%% of entry target %.2f "
             "(weekday gate)",
-            ticker, price, tc.tier2_min_price_proximity_pct, target,
+            ticker, price, pct, target,
         )
         return {"ticker": ticker, "skipped": "out_of_proximity", "target": target}
 
@@ -176,25 +177,39 @@ def _is_held(position_source: Any, ticker: str) -> bool:
     return pos is not None and getattr(pos, "quantity", 0) != 0
 
 
+def _effective_proximity_pct(
+    tc: TickerConfig | None, global_pct: float | None
+) -> float | None:
+    """The proximity percent that gates this ticker (#15).
+
+    A per-ticker ``min_price_proximity_pct`` overrides the global default
+    (``WatchyConfig.min_price_proximity_pct``); None at both levels disables.
+    """
+    if tc is not None and tc.min_price_proximity_pct is not None:
+        return tc.min_price_proximity_pct
+    return global_pct
+
+
 def _should_skip_tier2(
     price: float | None,
     tc: TickerConfig | None,
     state: dict[str, Any],
     now: datetime,
     held: bool,
+    global_pct: float | None = None,
 ) -> bool:
     """Whether Tier 2 should skip this ticker on this day (#15).
 
     Held tickers are never gated (capital at risk → always analyse). Sunday is
-    never gated (weekly full run). Otherwise skip only when the ticker opts in
-    via tier2_min_price_proximity_pct and price is outside that band of the
-    effective *entry* target.
+    never gated (weekly full run). Otherwise skip only when a proximity percent
+    applies (per-ticker min_price_proximity_pct, else the global default) and
+    price is outside that band of the effective *entry* target.
     """
     if held:                 # never gate a position you hold
         return False
     if now.weekday() == 6:   # Sunday — always run
         return False
-    pct = tc.tier2_min_price_proximity_pct if tc else None
+    pct = _effective_proximity_pct(tc, global_pct)
     if pct is None:
         return False
     return is_outside_proximity(price, _effective_target(tc, state), pct)

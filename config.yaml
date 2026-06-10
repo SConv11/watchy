@@ -30,13 +30,20 @@ watchlist:
   # - ticker: "NVDA"
   #   tier1_interval_h: 2
   #   tier2_time_utc: "14:30"
-  #   # Optional Tier 2 weekday gate (#15): for a NON-held ticker, skip the daily
-  #   # LLM pipeline when price is farther than N% from the entry target. The
-  #   # target is the manual target_price below, else the #16 auto-derived one.
-  #   # Held tickers always run; Sunday always runs. Omit to never gate.
-  #   # (Tier 1 is never proximity-gated — it always scans during market hours.)
+  #   # Optional manual entry level (else the #16 auto-derived target is used).
   #   target_price: 180.0
-  #   tier2_min_price_proximity_pct: 8.0
+  #   # Per-ticker override of the global Tier 2 gate (min_price_proximity_pct
+  #   # below): e.g. set a huge percent to effectively never gate this name, or a
+  #   # smaller one to gate it tighter than the default.
+  #   min_price_proximity_pct: 8.0
+
+# Tier 2 price-proximity gate (#15) — global default applied to every watch-only
+# (non-held) ticker. On weekdays, skip the daily LLM pipeline when price is farther
+# than this percent from the entry target (manual target_price, else the #16
+# auto-derived one). Held tickers and Sunday always run; Tier 1 is never gated.
+# A per-ticker min_price_proximity_pct (long-form watchlist above) overrides this.
+# Remove this line to disable the gate globally.
+min_price_proximity_pct: 8.0
 
 # Thresholds & cooldowns below are OPTIONAL — defaults are in code.
 # Uncomment any section to override.
