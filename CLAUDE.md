@@ -5,6 +5,41 @@ Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM 
 
 ## Current status — read first (updated 2026-06-10)
 
+### 2026-06-10 — Schwab LIVE + token-expiry alerts (#4 done)
+
+Schwab developer app approved and **OAuth completed on the VPS** — the live position
+layer is now authoritative (verified: 8 positions fetched). Two things landed:
+- **schwabdev 3.x migration.** The VPS had schwabdev **3.0.4**, a breaking API change
+  vs the 2.x the code was written for. Fixes in `watchy/schwab.py`: `Client(...)` now
+  takes `tokens_db=` (a **SQLite** token store, not `tokens_file=` JSON) + we pass
+  `open_browser_for_auth=False` (headless VPS); `account_linked()` was renamed
+  `linked_accounts()` (`account_details()` unchanged). Pin bumped to `schwabdev>=3.0.0`;
+  default `tokens_path` now `~/watchy_config/schwab_tokens.db`.
+- **Batch-shared position fetch + token-expiry alerting** (`watchy/schwab_health.py`).
+  - **Position fetch is now fetched once per Tier 2 batch and shared across all tickers.**
+    `run_daily_scan` builds ONE `RobustPositionSource` up front and passes it into every
+    `_run_ticker` (signature gained a `position_source` param) — previously each ticker
+    built its own and re-hit Schwab, so a 17-ticker batch = 17 redundant identical account
+    calls. The per-scan source already memoizes its snapshot; sharing the instance gives
+    the whole batch **one consistent holdings view + one API call**. Tier 1 unchanged in
+    cadence (event-driven), but now **fetches the position BEFORE running the pipeline**
+    (validates Schwab up front; holdings still feed only the advisor, not TradingAgents —
+    `propagate()` has no position input. See discussion deferred: feeding holdings into TA).
+  - **The 7-day refresh token used to expire silently** (live fetch fails → degrade to
+    cache/manual, journal-only). Now `monitor_schwab(source)` inspects the snapshot the
+    scan **already** resolved (no extra fetch): if it isn't `Schwab (live)` → **re-auth
+    needed** alert; if live but the recorded auth is within ~1 day of the 7-day limit →
+    **expiring soon** warning. Called once per Tier 2 batch (on the shared source) and on
+    each Tier 1 fired-signal scan. **No separate health-check job** — the batch fetch IS
+    the daily probe. Deduped: **≤1 re-auth alert/day** + **≤1 expiry warning/auth cycle**
+    (`kv` markers). The 7-day clock is stamped by `scripts/schwab_oauth.py` on successful
+    auth (new generic `StateStore.get_kv/set_kv` + `kv` table). **252 tests green.**
+- **Re-auth procedure:** every ≤7 days, on the VPS: `cd ~/watchy && ~/.pyenv/.../trading/bin/python
+  scripts/schwab_oauth.py` (reuses tokens if valid; full browser flow if expired). This both
+  refreshes the token AND re-stamps the expiry clock. **Not yet committed/deployed at the time
+  of writing — commit, push, `git pull` + `systemctl restart watchy` on the VPS, then re-run
+  schwab_oauth.py once to stamp the auth time.**
+
 ### 2026-06-10 — skip-mechanism cleanup + Tier 2 gate ENABLED (commits 61eea73, 3449c1d; deployed & verified)
 
 Resolved a "skip-mechanism incoherence" (two divergent proximity gates) and turned on

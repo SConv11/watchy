@@ -70,6 +70,19 @@ def main() -> int:
               "Check the logs above; re-run after fixing.")
         return 1
 
+    # Stamp the auth time so the daemon's daily health check can warn ~1 day before
+    # the 7-day refresh token expires (see watchy/schwab_health.py).
+    try:
+        from watchy.schwab_health import record_auth_success
+        from watchy.state import StateStore
+
+        store = StateStore()
+        record_auth_success(store)
+        store.close()
+        print("Recorded auth time for the 7-day expiry tracker.")
+    except Exception as exc:  # noqa: BLE001 — non-fatal; auth itself succeeded
+        print(f"(warning: couldn't record auth time for expiry tracking: {exc})")
+
     print("\nOK — Schwab connected. Token file written to:", tokens_path)
     print(f"  account_id   : {summary.account_id}")
     print(f"  total_value  : {summary.total_value}")

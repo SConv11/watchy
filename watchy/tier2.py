@@ -23,6 +23,7 @@ from watchy.notify import TelegramNotifier
 from watchy.orchestrator import get_scheduled_spec, run_pipeline
 from watchy.positions import get_position_source
 from watchy.proximity import is_outside_proximity
+from watchy.schwab_health import monitor_schwab
 from watchy.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -45,12 +46,21 @@ def run_daily_scan(
 
     logger.info("Tier 2 daily scan starting for %d tickers", len(tickers))
 
+    # Fetch positions once for the whole batch and reuse the snapshot across every
+    # ticker (the account is the same for all of them). This both avoids N redundant
+    # Schwab calls and gives the batch one consistent holdings view. The fetch here
+    # also validates Schwab/OAuth: monitor_schwab reads the resolved snapshot and
+    # alerts if it isn't live (expired token) or is nearing the 7-day limit.
+    position_source = get_position_source(config)
+    monitor_schwab(config, store, notifier, position_source)
+
     for i, ticker in enumerate(tickers):
         if i > 0 and config.tier2_throttle_s > 0:
             time.sleep(config.tier2_throttle_s)
         try:
             results[ticker] = _run_ticker(
-                ticker, config, store, notifier, pipeline_runner, ticker_locks,
+                ticker, config, store, notifier, position_source,
+                pipeline_runner, ticker_locks,
             )
         except Exception as exc:
             logger.exception("Tier 2 failed for %s", ticker)
@@ -67,6 +77,7 @@ def _run_ticker(
     config: WatchyConfig,
     store: StateStore,
     notifier: TelegramNotifier,
+    position_source: Any,
     pipeline_runner: Any = None,
     ticker_locks: TickerLockRegistry | None = None,
 ) -> dict[str, Any]:
@@ -94,7 +105,6 @@ def _run_ticker(
     # Sunday is always run (weekly full update).
     tc = config.get_ticker_config(ticker)
     state = store.get_ticker_state(ticker)
-    position_source = get_position_source(config)
     held = _is_held(position_source, ticker)
     if _should_skip_tier2(price, tc, state, now, held, config.min_price_proximity_pct):
         target = _effective_target(tc, state)

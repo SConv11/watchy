@@ -26,6 +26,7 @@ from watchy.orchestrator import (
     run_pipeline,
 )
 from watchy.positions import get_position_source
+from watchy.schwab_health import monitor_schwab
 from watchy.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -109,12 +110,17 @@ def _handle_signal(
     # launch analysts
     run_id = store.start_run(ticker, "tier1", sig)
     try:
+        # Fetch the position first (then run the expensive pipeline). This also
+        # validates Schwab/OAuth up front: monitor_schwab reads the resolved
+        # snapshot and alerts if it isn't live (expired token) or is nearing the
+        # 7-day limit. (Holdings feed the advisor below, not TradingAgents.)
+        position_source = get_position_source(config)
+        position_text = position_source.format_position_context(ticker)
+        monitor_schwab(config, store, notifier, position_source)
+
         result = run_pipeline(ticker, spec, runner=pipeline_runner)
         store.complete_run(run_id, success=True, summary=result.get("summary", ""))
 
-        # fetch position and synthesize advice
-        position_source = get_position_source(config)
-        position_text = position_source.format_position_context(ticker)
         advice = get_advice(ticker, result, position_source, config)
 
         notifier.pipeline_result(

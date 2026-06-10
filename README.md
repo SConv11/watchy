@@ -47,6 +47,10 @@
 3. **手动文件（manual file）** —— 最终兜底：`~/watchy_config/positions.yaml`（schema 见 `positions.example.yaml`）。用于 Schwab 首次授权前的引导，或彻底无可用数据时。手动文件的持仓会用 yfinance 实时价格补全市值与浮动盈亏（unrealized P&L），**同样标注时效**——优先读文件里可选的 `as_of:` 字段（你声明的持仓截至日期），否则退回文件修改时间（mtime）。
 
 > Schwab 实时层通过 **`schwabdev`** 包实现（只读：持仓 + 余额）。首次需在运行守护进程的机器上做一次浏览器 OAuth（schwabdev 打印授权 URL，授权后把回调 URL 粘回终端），token 存到 `tokens_path`（schwabdev 3.x 的 SQLite 库，默认 `~/watchy_config/schwab_tokens.db`）；refresh token 有效期 7 天，到期需重新授权——任何实时获取失败都会自动回退到缓存快照、再到手动文件，守护进程不中断。配置见 `secrets.example.yaml` 的 `schwab:` 段。
+>
+> **持仓在每个 Tier 2 批次开头抓取一次，并在该批所有 ticker 间共享**（整批一致的持仓视图 + 一次 API 调用，而非每个 ticker 各抓一次）。Tier 1 在信号触发时抓取，且在跑分析 pipeline 之前。
+>
+> **Token 过期提醒（不再静默用陈旧数据）：** 每个 Tier 2 批次(以及每次 Tier 1 触发扫描)会检查它刚解析出的持仓快照——若 refresh token **已失效**（扫描回退到缓存/手动数据，需重新授权）或**即将过期**（距 7 天上限约 1 天内）就推送 Telegram 提醒。不额外发请求,直接复用扫描已做的那次抓取。提醒按天去重（每天最多一条重新授权提示）。7 天计时由 `scripts/schwab_oauth.py` 在授权成功时打点——用该脚本重新授权即可保持提醒准确。
 
 ## 快速开始（Quick Start）
 

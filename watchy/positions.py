@@ -484,6 +484,14 @@ class RobustPositionSource(PositionSource):
     def get_account_summary(self) -> AccountSummary | None:
         return self._snapshot().summary
 
+    def provenance(self) -> str | None:
+        """Source label for the resolved snapshot ('Schwab (live)' | cache | file | None).
+
+        Lets callers detect a fallback off live data (e.g. an expired Schwab token)
+        without re-fetching — the snapshot is memoized.
+        """
+        return self._snapshot().provenance
+
     # Append provenance so stale/fallback data is never silently presented as live.
 
     def format_position_context(self, ticker: str) -> str | None:

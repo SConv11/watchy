@@ -91,6 +91,19 @@ refresh:**
 > lasts 7 days; on expiry, re-auth — any live-fetch failure falls back to the cache
 > then the manual file, so the daemon never stops. See the `schwab:` section of
 > `secrets.example.yaml`.
+>
+> **Positions are fetched once per Tier 2 batch and shared across all tickers** (one
+> consistent holdings view + one API call, instead of one call per ticker). Tier 1
+> fetches on a fired signal, before running the pipeline.
+>
+> **Token-expiry alerts (no more silent staleness):** each Tier 2 batch (and each
+> Tier 1 fired-signal scan) inspects the position snapshot it just resolved and pushes
+> a Telegram alert when the refresh token has **already lapsed** (re-auth needed — the
+> scan is on cached/manual data) or is **expiring soon** (within ~1 day of the 7-day
+> limit). No extra API call — it reads the fetch the scan already did. Alerts are
+> deduped to at most one re-auth nag per day. The 7-day clock is stamped by
+> `scripts/schwab_oauth.py` on a successful auth, so re-auth via that script keeps the
+> warnings accurate.
 
 ## Quick Start
 

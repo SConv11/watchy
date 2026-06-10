@@ -71,6 +71,15 @@ class StateStore:
                 summary TEXT
             );
 
+            -- Generic key/value scratch space for daemon-level state that isn't
+            -- per-ticker (e.g. Schwab token-health dedup markers). A brand-new
+            -- table, so CREATE IF NOT EXISTS also covers the live VPS db.
+            CREATE TABLE IF NOT EXISTS kv (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_ts TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_signal_log_ticker
                 ON signal_log(ticker, signal_type);
             CREATE INDEX IF NOT EXISTS idx_signal_log_fired
@@ -190,6 +199,25 @@ class StateStore:
                 "UPDATE run_history SET completed_ts = ?, success = ?, summary = ? "
                 "WHERE id = ?",
                 (_now_iso(), int(success), summary, run_id),
+            )
+            self._conn.commit()
+
+    # --- generic key/value ---
+
+    def get_kv(self, key: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM kv WHERE key = ?", (key,)
+            ).fetchone()
+        return row[0] if row else None
+
+    def set_kv(self, key: str, value: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO kv (key, value, updated_ts) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+                "updated_ts = excluded.updated_ts",
+                (key, value, _now_iso()),
             )
             self._conn.commit()
 
