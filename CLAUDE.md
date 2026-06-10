@@ -3,7 +3,35 @@
 Watchy is a stock-monitoring daemon built on top of TradingAgents.
 Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM pipeline.
 
-## Current status — read first (updated 2026-06-08)
+## Current status — read first (updated 2026-06-10)
+
+### 2026-06-10 — skip-mechanism cleanup + Tier 2 gate ENABLED (commits 61eea73, 3449c1d; deployed & verified)
+
+Resolved a "skip-mechanism incoherence" (two divergent proximity gates) and turned on
+the Tier 2 cost gate:
+- **Tier 1 no longer has a proximity gate** — the per-ticker `#5` skip and its
+  `tier1_min_price_proximity_pct` field were **deleted**. Tier 1 is now an
+  *unconditional safety net*: during market hours it always scans (market-hours +
+  cooldown only), so far-from-target names still get crash/signal coverage. (This also
+  removed `#5`'s latent bugs: no held-exemption + frozen `prev_*` transition state.)
+- **One proximity gate remains — Tier 2 `#15`, renamed `tier2_min_price_proximity_pct`
+  → `min_price_proximity_pct`.** Now has a **global default**
+  (`WatchyConfig.min_price_proximity_pct`, applied to every watch-only ticker) + optional
+  **per-ticker override** (same key, long-form watchlist). Held tickers and Sunday are
+  never gated; Tier 1 is unaffected. Resolution: `tier2._effective_proximity_pct(tc, global)`.
+- **Gate ENABLED at 8% globally** (`config.yaml` top-level `min_price_proximity_pct: 8.0`).
+  Self-bootstrapping: gates against the #16 `derived_target_price`, which seeds on Tier 2
+  runs — so **savings ramp over a few days** (no manual `target_price` set on any ticker;
+  no-target → runs). Symmetric band → a watch-only name crashing far *below* entry is
+  silenced on weekdays (covered by Tier 1 signals + Sunday).
+- **`volume_anomaly_moderate` (1.5×) signal removed** as low-signal noise (was 3/8 of one
+  day's Tier 1 triggers); volume now fires only `volume_anomaly_strong` (≥2×). Removed
+  `volume_ratio_moderate`.
+- Deployed 2026-06-10 (auto-update pull + `systemctl restart watchy`, 18 jobs, clean);
+  config load verified `gate=8.0, tickers=17`. **243** unit tests green.
+- **Observe/deferred:** confirm `derived_target_price` seeds after the first new-code
+  11:30 UTC Tier 2; watch DeepSeek daily cost vs ¥4/day baseline. Deferred by choice:
+  coalescing same-scan multi-signal Tier 1 runs (latent, low priority).
 
 **Deployed & validated on the VPS (2026-06-08).** The daemon runs under systemd
 (`watchy.service`, env `trading`); both pre-deploy smokes passed: `tests/test_e2e.py GOOG`
