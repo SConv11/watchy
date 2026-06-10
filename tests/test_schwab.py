@@ -31,7 +31,7 @@ class _FakeSchwab:
         self._details = details_by_hash
         self.calls = []
 
-    def account_linked(self):
+    def linked_accounts(self):
         return _Resp(self._accounts)
 
     def account_details(self, acct_hash, fields=None):

@@ -130,7 +130,7 @@ class SchwabClient(PositionSource):
 
     def _account_hash(self, client) -> str:
         """Resolve the account hash for config.account_id (or the first account)."""
-        resp = client.account_linked()
+        resp = client.linked_accounts()  # schwabdev 3.x (was account_linked in 2.x)
         resp.raise_for_status()
         accounts = resp.json() or []
         if not accounts:
