@@ -72,7 +72,7 @@ class TestGetPipeline:
             "rsi_oversold", "rsi_overbought",
             "macd_bullish_cross", "macd_bearish_cross",
             "bollinger_upper_breach", "bollinger_lower_breach",
-            "volume_anomaly_strong", "volume_anomaly_moderate",
+            "volume_anomaly_strong",
             "atr_spike",
         }
         assert set(SIGNAL_PIPELINE.keys()) == expected

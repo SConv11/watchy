@@ -94,7 +94,7 @@ journalctl -u watchy -f  # 查看日志
 
 | 配置项 | 用途 |
 |--------|------|
-| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间，以及可选的价格邻近过滤：`target_price` + `tier1_min_price_proximity_pct`（Tier 1，仅当现价在目标价 N% 以内才扫该票）和 `tier2_min_price_proximity_pct`（Tier 2 工作日门控，#15；目标价缺省时用 #16 自动推导值，周日不门控） |
+| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间，以及可选的 `target_price` + `tier2_min_price_proximity_pct`（Tier 2 工作日门控，#15；目标价缺省时用 #16 自动推导值，持仓票与周日永不门控）。Tier 1 不做邻近门控，交易时段内始终扫描 |
 | `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
 | `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
 | `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |

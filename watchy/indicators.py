@@ -202,16 +202,11 @@ def detect_signals(
         elif now["prev_bollinger_below_lower"] and not prev_state.get("prev_bollinger_below_lower"):
             signals.append("bollinger_lower_breach")
 
-    # Volume anomaly — fire on entry; strong (≥2x) vs moderate (≥1.5x) by the
-    # ratio at the moment of entry.
-    vol = bundle.volume
-    avg_vol = bundle.avg_volume_20d
-    if vol and avg_vol and avg_vol > 0:
-        if now["prev_volume_anomaly"] and not prev_state.get("prev_volume_anomaly"):
-            ratio = vol / avg_vol
-            signals.append(
-                "volume_anomaly_strong" if ratio >= 2.0 else "volume_anomaly_moderate"
-            )
+    # Volume anomaly — fire on entry into the strong (≥2x) zone. The weaker
+    # moderate (≥1.5x) tier was removed as low-signal noise: a 1.5x blip is
+    # common and cost an LLM call per fire for little actionable value.
+    if now["prev_volume_anomaly"] and not prev_state.get("prev_volume_anomaly"):
+        signals.append("volume_anomaly_strong")
 
     # ATR spike — fire on entry.
     if now["prev_atr_spike"] and not prev_state.get("prev_atr_spike"):
@@ -236,7 +231,7 @@ def compute_level_states(bundle: IndicatorBundle) -> dict[str, int]:
     )
     vol_anomaly = 0
     if bundle.volume and bundle.avg_volume_20d and bundle.avg_volume_20d > 0:
-        vol_anomaly = int(bundle.volume / bundle.avg_volume_20d >= 1.5)
+        vol_anomaly = int(bundle.volume / bundle.avg_volume_20d >= 2.0)
     atr_spike = 0
     if bundle.atr and bundle.avg_atr_20d and bundle.avg_atr_20d > 0:
         atr_spike = int(bundle.atr >= 1.5 * bundle.avg_atr_20d)

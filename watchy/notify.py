@@ -366,7 +366,6 @@ def _signal_label(signal_type: str) -> str:
         "bollinger_upper_breach": "Bollinger Upper Band Breach",
         "bollinger_lower_breach": "Bollinger Lower Band Breach",
         "volume_anomaly_strong": "Volume Anomaly (≥ 2x avg)",
-        "volume_anomaly_moderate": "Volume Anomaly (≥ 1.5x avg)",
         "atr_spike": "ATR Spike (≥ 1.5x avg)",
         "scheduled_daily": "Scheduled Daily Run",
     }

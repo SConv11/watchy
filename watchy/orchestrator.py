@@ -110,13 +110,6 @@ SIGNAL_PIPELINE: dict[str, PipelineSpec] = {
         risk=RiskMode.SIMPLIFIED,
     ),
 
-    # Volume moderate — market analyst only, no debate, no risk (info only)
-    "volume_anomaly_moderate": PipelineSpec(
-        analysts=AnalystSet.MARKET_ONLY,
-        debate=DebateMode.NONE,
-        risk=RiskMode.NONE,
-    ),
-
     # ATR spike — Market + Sentiment, simplified risk
     "atr_spike": PipelineSpec(
         analysts=AnalystSet.MARKET_SENTIMENT,
@@ -180,7 +173,6 @@ def get_cooldown_hours(signal_type: str, cooldown_config: Any) -> float:
         "bollinger_upper_breach": cfg.bollinger_breach_h,
         "bollinger_lower_breach": cfg.bollinger_breach_h,
         "volume_anomaly_strong": cfg.volume_anomaly_h,
-        "volume_anomaly_moderate": cfg.volume_anomaly_h,
         "atr_spike": cfg.atr_spike_h,
     }
     return mapping.get(signal_type, 4.0)

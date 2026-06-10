@@ -136,7 +136,7 @@ See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key se
 
 | Setting | Purpose |
 |---------|---------|
-| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, and optional price-proximity filters — `target_price` + `tier1_min_price_proximity_pct` (Tier 1: only scan when price is within N% of target) and `tier2_min_price_proximity_pct` (Tier 2 weekday gate, #15; falls back to the #16 auto-derived target, never gated on Sunday or when held) |
+| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, and optional `target_price` + `tier2_min_price_proximity_pct` (Tier 2 weekday gate, #15; falls back to the #16 auto-derived target, never gated on Sunday or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
 | `signal_thresholds` | Detection thresholds for RSI, volume, ATR, etc. |
 | `cooldown` | Per-signal cooldown window to suppress repeat pushes |
 | `tier2_throttle_s` | Seconds to sleep between tickers in a Tier 2 daily scan (default 2.0), to smooth yfinance requests and avoid rate limits |

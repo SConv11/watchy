@@ -168,8 +168,9 @@ class TestDetectSignals:
         signals = detect_signals(bundle, {})
         assert "volume_anomaly_strong" in signals
 
-    def test_volume_anomaly_moderate(self):
-        """Last volume 1.7x the 20-day average."""
+    def test_volume_below_strong_does_not_fire(self):
+        """1.7x volume is below the strong (2x) threshold — the moderate tier was
+        removed, so no volume signal fires."""
         prices = [100.0] * 250
         df = make_ohlcv(prices)
         bundle = compute_indicators("TEST", df)
@@ -178,7 +179,8 @@ class TestDetectSignals:
         bundle.avg_volume_20d = 1_000_000
 
         signals = detect_signals(bundle, {})
-        assert "volume_anomaly_moderate" in signals
+        assert "volume_anomaly_moderate" not in signals
+        assert "volume_anomaly_strong" not in signals
 
     def test_atr_spike(self):
         """ATR 2x the 20-day average ATR."""
@@ -281,11 +283,11 @@ class TestLevelSignalTransitions:
         )
 
     # --- Volume ---
-    def test_volume_entry_fires_strong_vs_moderate(self):
-        strong = self._bundle(volume=2_500_000)  # 2.5x
-        moderate = self._bundle(volume=1_700_000)  # 1.7x
+    def test_volume_entry_fires_strong_only(self):
+        strong = self._bundle(volume=2_500_000)  # 2.5x → fires
+        below = self._bundle(volume=1_700_000)  # 1.7x → below 2x, fires nothing
         assert "volume_anomaly_strong" in detect_signals(strong, {})
-        assert "volume_anomaly_moderate" in detect_signals(moderate, {})
+        assert detect_signals(below, {}) == []
 
     def test_volume_persist_silent(self):
         b = self._bundle(volume=2_500_000)

@@ -15,11 +15,10 @@ class TickerConfig:
     ticker: str
     tier1_interval_h: float = 0.5
     tier2_time_utc: str = "11:30"
-    # Optional per-ticker Tier 1 price-proximity skip (#5). When both are set,
-    # Tier 1 skips the scan unless the current price is within
-    # tier1_min_price_proximity_pct percent of target_price.
+    # Optional manual entry/accumulation target. Used by the Tier 2 proximity
+    # gate (#15) as the effective target when set (else the #16 auto-derived one).
+    # Tier 1 is never proximity-gated.
     target_price: float | None = None
-    tier1_min_price_proximity_pct: float | None = None
     # Optional per-ticker Tier 2 price-proximity gate (#15). When set, the daily
     # LLM pipeline is skipped on *weekdays* if the current price is farther than
     # this percent from the effective target (manual target_price, else the
@@ -32,7 +31,6 @@ class TickerConfig:
 class SignalThresholds:
     rsi_oversold: float = 30.0
     rsi_overbought: float = 70.0
-    volume_ratio_moderate: float = 1.5
     volume_ratio_strong: float = 2.0
     atr_ratio: float = 1.5
 

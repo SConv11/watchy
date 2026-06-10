@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from watchy.advisor import get_advice
-from watchy.config import TickerConfig, WatchyConfig
+from watchy.config import WatchyConfig
 from watchy.indicators import (
     IndicatorBundle,
     compute_indicators,
@@ -26,7 +26,6 @@ from watchy.orchestrator import (
     run_pipeline,
 )
 from watchy.positions import get_position_source
-from watchy.proximity import is_outside_proximity
 from watchy.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -50,17 +49,6 @@ def scan_ticker(
     bundle = compute_indicators(ticker)
     if bundle is None:
         logger.warning("Skipping %s — no indicator data", ticker)
-        return []
-
-    # Per-ticker price-proximity skip (#5): when a target price + proximity are
-    # configured, skip tickers trading far from the level the user cares about.
-    tc = config.get_ticker_config(ticker)
-    if _is_outside_proximity(bundle.current_price, tc):
-        logger.info(
-            "Tier 1 skip %s — price %.2f outside %.2f%% of target %.2f",
-            ticker, bundle.current_price,
-            tc.tier1_min_price_proximity_pct, tc.target_price,
-        )
         return []
 
     prev = store.get_ticker_state(ticker)
@@ -96,19 +84,6 @@ def scan_ticker(
 def _nullcontext():
     from contextlib import nullcontext
     return nullcontext()
-
-
-def _is_outside_proximity(price: float | None, tc: TickerConfig | None) -> bool:
-    """Tier 1 wrapper over the shared proximity gate, using the Tier 1 percent.
-
-    Returns False (never skip) when the feature isn't configured for this ticker,
-    when there's no price, or on a non-positive target.
-    """
-    if tc is None:
-        return False
-    return is_outside_proximity(
-        price, tc.target_price, tc.tier1_min_price_proximity_pct
-    )
 
 
 def _handle_signal(

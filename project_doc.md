@@ -47,7 +47,7 @@ Package marker. Exposes `__version__ = "0.1.0"`.
 | Class | Fields | Purpose |
 |-------|--------|---------|
 | `TickerConfig` | `ticker`, `tier1_interval_h`, `tier2_time_utc` | Per-ticker watchlist entry |
-| `SignalThresholds` | `rsi_oversold` (30), `rsi_overbought` (70), `volume_ratio_moderate` (1.5), `volume_ratio_strong` (2.0), `atr_ratio` (1.5) | Thresholds for signal detection |
+| `SignalThresholds` | `rsi_oversold` (30), `rsi_overbought` (70), `volume_ratio_strong` (2.0), `atr_ratio` (1.5) | Thresholds for signal detection |
 | `CooldownConfig` | `rsi_extreme_h` (12), `macd_cross_h` (24), `bollinger_breach_h` (6), `volume_anomaly_h` (4), `atr_spike_h` (6), `golden_cross_d` (7) | Per-signal cooldown windows |
 | `LLMConfig` | `provider`, `model`, `api_key`, `api_base` | LLM backend (Anthropic or OpenAI) |
 | `TelegramConfig` | `bot_token`, `chat_id` | Telegram Bot credentials |
@@ -138,7 +138,6 @@ Signal detection rules:
 | `bollinger_upper_breach` | `price >= bb_upper` |
 | `bollinger_lower_breach` | `price <= bb_lower` |
 | `volume_anomaly_strong` | `volume / avg_volume_20d >= 2.0` |
-| `volume_anomaly_moderate` | `volume / avg_volume_20d >= 1.5` (only if strong doesn't also fire) |
 | `atr_spike` | `atr >= 1.5 × avg_atr_20d` |
 
 Key design detail: golden cross requires the **full MA staircase** (price above 50MA above 150MA above 200MA) **and** the 200MA trending up for at least one month. This filters out false crosses where MAs touch briefly in a choppy market without a genuine trend change. Death cross only requires the simple 50/200 cross — the staircase condition isn't needed because downside moves tend to be faster and more decisive.
@@ -193,7 +192,6 @@ Computes ATR with an optional `offset` parameter — when offset > 0, the last `
 | `macd_bullish_cross` / `macd_bearish_cross` | Market + Sentiment | Bull/Bear | Simplified | Momentum shift confirmation |
 | `bollinger_upper_breach` / `bollinger_lower_breach` | Market + Sentiment | Bull/Bear | Simplified | Volatility breakout context |
 | `volume_anomaly_strong` (≥2x) | Market + Sentiment | Bull/Bear | Simplified | Unusual activity, needs context |
-| `volume_anomaly_moderate` (≥1.5x) | Market only | None | None | Info-only alert, no debate needed |
 | `atr_spike` | Market + Sentiment | Bull/Bear | Simplified | Volatility regime change |
 
 **Risk mode detail:**
@@ -433,8 +431,7 @@ watchlist:
 signal_thresholds:               # all optional, defaults shown
   rsi_oversold: 30
   rsi_overbought: 70
-  volume_ratio_moderate: 1.5     # fires info-only alert (Market analyst, no debate)
-  volume_ratio_strong: 2.0       # fires full Tier 1 pipeline
+  volume_ratio_strong: 2.0       # fires the volume_anomaly_strong Tier 1 pipeline
   atr_ratio: 1.5
 
 cooldown:                        # prevents re-firing same signal within window
