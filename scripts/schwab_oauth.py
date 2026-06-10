@@ -10,7 +10,8 @@ What it does:
   2. Constructs the schwabdev client — on first run with no token file this kicks
      off the browser OAuth: schwabdev prints an auth URL; open it, log in, approve,
      then paste the full https://127.0.0.1... redirect URL back into the terminal.
-     Tokens are written to schwab.tokens_path (default ~/watchy_config/schwab_tokens.json).
+     Tokens are written to schwab.tokens_path (a schwabdev 3.x SQLite db,
+     default ~/watchy_config/schwab_tokens.db).
   3. Does a real read (account summary) to confirm the credentials work, and prints
      a redacted summary. No orders, no writes — read-only.
 

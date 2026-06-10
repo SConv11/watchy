@@ -110,11 +110,16 @@ class SchwabClient(PositionSource):
             self._client_failed = True
             return None
         try:
+            # schwabdev 3.x: tokens live in a SQLite db (tokens_db), not a JSON
+            # file. open_browser_for_auth=False keeps the flow headless-friendly
+            # (prints the auth URL instead of trying to launch a browser on the
+            # VPS); the daemon never re-auths interactively anyway.
             self._client = schwabdev.Client(
                 self.config.api_key,
                 self.config.api_secret,
                 self.config.callback_url,
-                tokens_file=os.path.expanduser(self.config.tokens_path),
+                tokens_db=os.path.expanduser(self.config.tokens_path),
+                open_browser_for_auth=False,
             )
         except Exception:
             # e.g. expired refresh token needing manual reauth → degrade to fallback.

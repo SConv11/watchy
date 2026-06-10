@@ -68,7 +68,7 @@ class SchwabConfig:
     account_id: str = ""       # account number to use; blank = first linked account
     enabled: bool = False
     callback_url: str = "https://127.0.0.1"
-    tokens_path: str = "~/watchy_config/schwab_tokens.json"
+    tokens_path: str = "~/watchy_config/schwab_tokens.db"  # schwabdev 3.x SQLite token store
 
 
 @dataclass

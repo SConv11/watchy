@@ -87,7 +87,7 @@ refresh:**
 > The Schwab live layer uses **`schwabdev`** (read-only: positions + balances). The
 > first run needs a one-time browser OAuth on the host machine (schwabdev prints an
 > authorization URL; paste the callback URL back into the terminal); tokens are stored
-> at `tokens_path` (default `~/watchy_config/schwab_tokens.json`). The refresh token
+> at `tokens_path` (a schwabdev 3.x SQLite db, default `~/watchy_config/schwab_tokens.db`). The refresh token
 > lasts 7 days; on expiry, re-auth — any live-fetch failure falls back to the cache
 > then the manual file, so the daemon never stops. See the `schwab:` section of
 > `secrets.example.yaml`.
