@@ -28,17 +28,22 @@ layer is now authoritative (verified: 8 positions fetched). Two things landed:
   - **The 7-day refresh token used to expire silently** (live fetch fails → degrade to
     cache/manual, journal-only). Now `monitor_schwab(source)` inspects the snapshot the
     scan **already** resolved (no extra fetch): if it isn't `Schwab (live)` → **re-auth
-    needed** alert; if live but the recorded auth is within ~1 day of the 7-day limit →
-    **expiring soon** warning. Called once per Tier 2 batch (on the shared source) and on
-    each Tier 1 fired-signal scan. **No separate health-check job** — the batch fetch IS
-    the daily probe. Deduped: **≤1 re-auth alert/day** + **≤1 expiry warning/auth cycle**
-    (`kv` markers). The 7-day clock is stamped by `scripts/schwab_oauth.py` on successful
-    auth (new generic `StateStore.get_kv/set_kv` + `kv` table). **252 tests green.**
+    needed** alert; if live, a **two-stage expiry warning** — one when the refresh token
+    has **≤2 days left**, a second more-urgent one at **≤1 day left** (`EXPIRY_WARN_DAYS_LEFT`).
+    These use a **loud bordered format** (🔴/🟠/🚨 emoji rows + caps header) so they stand
+    out from ordinary position advice. Called once per Tier 2 batch (on the shared source)
+    and on each Tier 1 fired-signal scan. **No separate health-check job** — the batch fetch
+    IS the daily probe. Deduped: **≤1 re-auth alert/day** + **each expiry stage once/auth
+    cycle** (escalating — the `KV_EXPIRY_WARNED_AT` marker records the most-urgent tier sent;
+    a later stage still fires). The 7-day clock is stamped by `scripts/schwab_oauth.py` on
+    successful auth (generic `StateStore.get_kv/set_kv` + `kv` table). **254 tests green.**
 - **Re-auth procedure:** every ≤7 days, on the VPS: `cd ~/watchy && ~/.pyenv/.../trading/bin/python
-  scripts/schwab_oauth.py` (reuses tokens if valid; full browser flow if expired). This both
-  refreshes the token AND re-stamps the expiry clock. **Not yet committed/deployed at the time
-  of writing — commit, push, `git pull` + `systemctl restart watchy` on the VPS, then re-run
-  schwab_oauth.py once to stamp the auth time.**
+  scripts/schwab_oauth.py --force`. **Use `--force`** — it stashes the existing token db and
+  runs the full browser OAuth, issuing a *new* 7-day refresh token and re-stamping the clock.
+  A plain run (no `--force`) only refreshes the access token from the still-valid refresh token,
+  which does NOT reset the 7-day window — so re-running early without `--force` is a no-op for
+  expiry (this was a real point of confusion). `--force` deletes the `.bak` on success, restores
+  it on failure (never loses a usable token).
 
 ### 2026-06-10 — skip-mechanism cleanup + Tier 2 gate ENABLED (commits 61eea73, 3449c1d; deployed & verified)
 

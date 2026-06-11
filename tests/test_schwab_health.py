@@ -110,9 +110,10 @@ def test_monitor_expiry_soon_warns_once_per_cycle(store):
 
     sh.monitor_schwab(_cfg(), store, note, live)
     assert len(note.sent) == 1
-    assert "expiring soon" in note.sent[0].lower()
+    assert "schwab token" in note.sent[0].lower()
+    assert "~1 day" in note.sent[0].lower()  # ~0.5 days left → most-urgent tier
 
-    # Same auth cycle → no repeat.
+    # Same auth cycle, same tier → no repeat.
     sh.monitor_schwab(_cfg(), store, note, live)
     assert len(note.sent) == 1
 
@@ -121,6 +122,39 @@ def test_monitor_expiry_soon_warns_once_per_cycle(store):
     store.set_kv(sh.KV_AUTH_AT, old)  # pretend it aged again
     sh.monitor_schwab(_cfg(), store, note, live)
     assert len(note.sent) == 2
+
+
+def test_monitor_expiry_escalates_two_day_then_one_day(store):
+    note = _FakeNotifier()
+    live = _Source("Schwab (live)")
+
+    # ~1.5 days left (5.5 days old) → the ≤2-day stage fires first.
+    store.set_kv(sh.KV_AUTH_AT, (datetime.now(timezone.utc) - timedelta(days=5, hours=12)).isoformat())
+    sh.monitor_schwab(_cfg(), store, note, live)
+    assert len(note.sent) == 1
+    assert "~2 days" in note.sent[0].lower()
+
+    # Re-check at the same ≤2-day stage → suppressed.
+    sh.monitor_schwab(_cfg(), store, note, live)
+    assert len(note.sent) == 1
+
+    # ~0.5 days left (6.5 days old) → escalates to the ≤1-day stage despite the prior warning.
+    store.set_kv(sh.KV_AUTH_AT, (datetime.now(timezone.utc) - timedelta(days=6, hours=12)).isoformat())
+    sh.monitor_schwab(_cfg(), store, note, live)
+    assert len(note.sent) == 2
+    assert "~1 day" in note.sent[1].lower()
+
+    # ≤1-day stage again → suppressed (already at the most-urgent tier).
+    sh.monitor_schwab(_cfg(), store, note, live)
+    assert len(note.sent) == 2
+
+
+def test_monitor_expiry_silent_above_two_days(store):
+    note = _FakeNotifier()
+    # ~3 days left (4 days old) → outside both warning windows.
+    store.set_kv(sh.KV_AUTH_AT, (datetime.now(timezone.utc) - timedelta(days=4)).isoformat())
+    sh.monitor_schwab(_cfg(), store, note, _Source("Schwab (live)"))
+    assert note.sent == []
 
 
 def test_monitor_live_and_fresh_is_silent(store):
