@@ -7,6 +7,7 @@
 #   # then edit secrets.yaml with your real keys
 
 watchlist:
+  - "COHR"
   - "AMZN"
   - "GOOG"
   - "AVGO"
@@ -24,6 +25,9 @@ watchlist:
   - "APH"
   - "HUBB"
 
+  # - "LRCX"
+  # - "KLAC"
+  # - "RMBS"
 
   # - "TSLA"
   # - "SOXX"
