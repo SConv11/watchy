@@ -32,7 +32,7 @@
 └─────────────────────────────────────────────────┘
 ```
 
-**Tier 1（第一层）**按可配间隔（默认每小时）逐票扫描，**仅在美股常规交易时段运行**（休市、周末、节假日自动跳过——靠 `exchange_calendars` 判断，含夏令时/DST 修正）。通过 yfinance 获取 OHLCV 数据并计算技术指标（technical indicators），不调用任何 LLM。检测 11 种信号类型，包括金叉/死叉（golden/death cross，含完整均线阶梯确认 full MA staircase）、RSI 极值、MACD 交叉、布林带突破（Bollinger breach）、成交量异动（volume anomaly）和 ATR 飙升。信号触发时，根据信号重要程度启动分级（graduated）的 TradingAgents 分析师子集。
+**Tier 1（第一层）**按可配间隔（默认每小时）逐票扫描，**仅在美股常规交易时段运行**（休市、周末、节假日自动跳过——靠 `exchange_calendars` 判断，含夏令时/DST 修正）。通过 yfinance 获取 OHLCV 数据并计算技术指标（technical indicators），不调用任何 LLM。检测 10 种信号类型，包括金叉/死叉（golden/death cross，含完整均线阶梯确认 full MA staircase）、RSI 极值、MACD 交叉、布林带突破（Bollinger breach）、成交量异动（volume anomaly）和 ATR 飙升。信号触发时，根据信号重要程度启动分级（graduated）的 TradingAgents 分析师子集。
 
 **Tier 2（第二层）**在配置的 UTC 时间运行（**周一–五 + 周日**，周六跳过，因与周日运行冗余）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
 
@@ -127,7 +127,6 @@ journalctl -u watchy -f  # 查看日志
 | 布林上轨突破 Upper Breach | 价格 ≥ 上轨 (2σ) | 6 小时 |
 | 布林下轨突破 Lower Breach | 价格 ≤ 下轨 (2σ) | 6 小时 |
 | 成交量异动 Volume Anomaly (≥2x) | 成交量 ≥ 20日均量的 2 倍 | 4 小时 |
-| 温和放量 Moderate Volume (≥1.5x) | 成交量 ≥ 20日均量的 1.5 倍（仅通知，不启动分析） | 4 小时 |
 | ATR 飙升 ATR Spike | ATR ≥ 20日均 ATR 的 1.5 倍 | 6 小时 |
 
 > **触发语义**：交叉类（金叉/死叉、MACD、RSI）和水平类（布林、成交量、ATR）信号都是
@@ -144,8 +143,7 @@ journalctl -u watchy -f  # 查看日志
 | Tier 2 周日运行 | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 完整三维 Full 3-way |
 | Tier 2 周六 | —（跳过，与周日运行冗余） | — | — |
 | 金叉/死叉 | 市场 + 情绪 + 新闻 | 多空 | 完整三维 |
-| RSI、MACD、布林、强放量、ATR | 市场 + 情绪 | 多空 | 简化 Simplified |
-| 温和放量 (≥1.5x) | 仅市场 Market only | 无 None | 无 None |
+| RSI、MACD、布林、强放量 (≥2x)、ATR | 市场 + 情绪 | 多空 | 简化 Simplified |
 
 ## Telegram 消息示例
 
@@ -204,6 +202,8 @@ watchy/
     ├── state.py              # SQLite 状态存储 (交叉记忆、冷却、历史)
     ├── indicators.py         # 技术指标计算 (yfinance + pandas, 无 LLM)
     ├── orchestrator.py       # 按信号类型的分级流水线选择
+    ├── pipeline_runner.py    # TradingAgents 桥接: PipelineSpec → TradingAgentsGraph
+    ├── token_tracker.py      # DeepSeek 组件级 token/成本追踪 (TOKENCOST 日志行)
     ├── advisor.py            # LLM 合成: 分析报告 + 持仓 → 交易建议
     ├── positions.py          # 分层持仓源: Schwab → 缓存快照 → 手动文件
     ├── schwab.py             # Schwab 券商 API 客户端 (实时层, schwabdev)
@@ -215,7 +215,7 @@ watchy/
 
 ## 对接 TradingAgents（Wiring）
 
-`orchestrator.py` 中的 `pipeline_runner` 参数是对接点。传入一个可调用对象 `(ticker, PipelineSpec) -> dict`，在其中调用 TradingAgents 的相应分析师子集。当前提供桩实现（stub），仅记录日志不实际调用。
+`orchestrator.py` 中的 `pipeline_runner` 参数是对接点：一个可调用对象 `(ticker, PipelineSpec) -> dict`。生产实现是 `pipeline_runner.py` 的 `create_tradingagents_runner(...)`，它把 `PipelineSpec` 映射成 `TradingAgentsGraph` 调用（按信号类型选择分析师子集、辩论轮数、风险深度），运行流水线、保存 markdown 报告，并通过 `token_tracker.py` 打出组件级 `TOKENCOST` 成本日志行。
 
 ## 文档（Documentation）
 

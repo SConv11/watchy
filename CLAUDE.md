@@ -3,7 +3,28 @@
 Watchy is a stock-monitoring daemon built on top of TradingAgents.
 Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM pipeline.
 
-## Current status — read first (updated 2026-06-10)
+## Current status — read first (updated 2026-06-13)
+
+### 2026-06-13 — per-component DeepSeek cost tracking (TOKENCOST; commit 868c571)
+
+Added `watchy/token_tracker.py` — a LangChain callback (`TokenCostTracker`) wired into
+every Tier 2 pipeline via `TradingAgentsGraph(..., callbacks=[tracker])` in
+`pipeline_runner.py`. It attributes DeepSeek token usage along two axes — **model**
+(deep_think v4-pro vs quick_think v4-flash) and **graph node** (which analyst/debater/
+manager made the call) — and emits **one greppable INFO line per run**:
+`TOKENCOST <ticker> [<analysts>|risk<N>] usd=.. models={..} nodes={..}`. Purpose is to
+see *where the daily Tier 2 cost goes* before deciding what to trim. `usd=` is a
+**USD proxy** for the CNY bill (we care about per-component *share*, not absolute).
+Every handler body is exception-safe — a bug here loses a measurement, never breaks a run.
+**Measurement-only: no schema change, no new config, no new dependency** (langchain-core
+already present). Collect after a Tier 2 batch:
+`journalctl -u watchy --since today | grep TOKENCOST`.
+- **Status: committed + pushed to origin/main (868c571), but NOT yet deployed on the VPS.**
+  Deploy = `git pull` + `systemctl restart watchy` on the VPS (⚠️ confirm the VPS's
+  uncommitted local watchlist edit before pulling). First full data = next 11:30 UTC Tier 2.
+- 254 tests green. Caveat: new watchlist tickers (no `derived_target_price` seed yet)
+  bypass the 8% gate for the first day or two, so early TOKENCOST totals run high before
+  the gate self-bootstraps — don't misread that as a regression.
 
 ### 2026-06-10 — Schwab LIVE + token-expiry alerts (#4 done)
 
