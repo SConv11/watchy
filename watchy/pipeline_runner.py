@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from watchy.orchestrator import AnalystSet, DebateMode, PipelineSpec, RiskMode
+from watchy.token_tracker import TokenCostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -97,13 +98,20 @@ def create_tradingagents_runner(
             config["max_risk_discuss_rounds"],
         )
 
+        tracker = TokenCostTracker()
         ta = TradingAgentsGraph(
             selected_analysts=selected_analysts,
             debug=False,
             config=config,
+            callbacks=[tracker],
         )
 
         final_state, decision = ta.propagate(ticker, today)
+
+        # Per-component token/cost breakdown (measurement only; one greppable
+        # TOKENCOST line per run). Label encodes the analyst set + risk depth so
+        # FULL/subset and Sunday-full-risk runs can be told apart in the journal.
+        tracker.log_summary(ticker, f"{'+'.join(selected_analysts)}|risk{config['max_risk_discuss_rounds']}")
 
         # ---- 3. Save reports as markdown --------------------------------
         report_path = _save_report(final_state, ticker, config)
