@@ -8,23 +8,29 @@
 
 watchlist:
   - "AMZN"
+  - "GOOG"
+  - "AVGO"
+  - "NVDA"
+  - "ANET"
+  - "AMAT"
   - "CARR"
   - "EMR"
-  - "GOOG"
   - "NVT"
   - "VST"
   - "AAPL"
-  # - "TSLA"
+  - "ETN" 
   - "MOD"
   - "VRT"
-  - "SMCI"
-  - "CEG"
-  - "AVGO"
   - "APH"
   - "HUBB"
-  - "SOXX"
-  - "PLTR"
-  - "NVDA"
+
+
+  # - "TSLA"
+  # - "SOXX"
+  # - "SMCI"
+  # - "CEG"
+
+  
   # Short form uses defaults: scan every 30min, daily at 11:30 UTC.
   # For per-ticker overrides, use the long form:
   # - ticker: "NVDA"
