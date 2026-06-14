@@ -89,6 +89,25 @@ sudo systemctl enable --now watchy
 journalctl -u watchy -f  # 查看日志
 ```
 
+**自动更新（Auto-update）** —— `watchy-update.timer` 每 5 分钟从 GitHub 拉取，有新提交时
+`git pull --ff-only` 并重启 daemon：
+
+```bash
+# 必需：允许 watchy 用户重启服务（auto-update.sh 以 watchy 身份运行，重启系统单元需 root）
+echo 'watchy ALL=(root) NOPASSWD: /usr/bin/systemctl restart watchy' \
+  | sudo tee /etc/sudoers.d/watchy-autoupdate
+sudo chmod 0440 /etc/sudoers.d/watchy-autoupdate && sudo visudo -c
+
+sudo cp ~/watchy/watchy-update.service ~/watchy/watchy-update.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now watchy-update.timer
+```
+
+> ⚠️ 上面的 sudoers drop-in 是**必需的**。`auto-update.sh` 以 `User=watchy` 运行，而
+> `systemctl restart watchy` 需要 root —— 缺了它，`git pull` 会成功但重启**静默失败**，
+> daemon 会一直跑旧代码（2026-06-14 踩过这个坑）。
+> 副作用：每次 push 都会触发重启，**勿在 Tier-2 窗口（~11:30–13:00 UTC）push**，否则打断批次。
+
 ## 配置（Configuration）
 
 配置分两个文件：
