@@ -5,19 +5,35 @@ Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM 
 
 ## Current status — read first (updated 2026-06-14)
 
-### 2026-06-14 — PLANNED: VPS migration (do this BEFORE 2026-07-02)
+### 2026-06-14 — VPS downsize decision: DEFERRED, pending live Tier-2 RAM-peak data
 
-**Why:** the current VPS (3-core / 4 GB) is overkill for Watchy and bills on **2026-07-02**.
-Migrating to **Bandwagon (搬瓦工) LA `USCA_2`**: **20 GB disk, 1 GB RAM, 2× CPU, $50/yr**.
-Must complete the move **before 2026-07-02**. Not started yet — the live capture will be
-done *together with the user* in a later session (user's call: "到时候一起做"). This block
-is the checklist of WHAT to capture/recreate so nothing is lost. **When we actually do it,
-create `docs/VPS_MIGRATION.md` as the runbook** (user asked to defer the doc; just record
-the task here for now).
+**Status:** migration not active work *yet*, but it's an **open decision the user is actively
+tracking**: whether to downsize from the current VPS (3-core / 4 GB, overkill, **bills 2026-07-02**)
+to **Bandwagon (搬瓦工) LA `USCA_2`** (20 GB / 1 GB / 2× CPU / $50/yr). **The deciding input is the
+live Tier-2 RAM peak** (open thread below). **Decide before the 2026-07-02 renewal:** if the peak
+leaves comfortable headroom on 1 GB → switch (saves money); if it runs hot → renew the current VPS.
+Capture checklist + SSH workaround further down are reference for *if* we switch.
 
-- **⚠️ RAM drops 4 GB → 1 GB.** Tier 2 runs the TradingAgents LLM pipeline + pandas; 1 GB is
-  tight. **Add swap (≥2 GB) on the new VPS** and watch memory during the first 11:30 UTC Tier 2
-  batch (17 tickers). This is the main migration risk.
+- **⏳ OPEN THREAD — Tier-2 RAM peak (drives the downsize decision):**
+  - **Measured so far:** live `watchy.service` **idle baseline = 150 MB** (`MemoryPeak`, CPU 3.17 s),
+    over an 18h uptime (since 2026-06-13 09:31 UTC). ⚠️ **That window had NO Tier 2 run** — Sat
+    06-13 is skipped and it was the weekend (Tier 1 market-hours-gated off), so **no `propagate()`
+    LLM pipeline ran**. 150 MB is the *idle* baseline only, **not** a Tier-2 peak.
+  - **Cross-check (local proxy, Windows/py3.13):** full import stack (numpy+pandas+yfinance+
+    yfinance_cache+langchain_core+`TradingAgentsGraph`) ≈ **205 MB RSS**; **imports dominate, market
+    data negligible** (~2.5 MB for 17 tickers). Linux/py3.11 lower — consistent with the live 150 MB.
+  - **Still to measure:** the peak *during an actual Tier 2 batch* (LangGraph message/debate-
+    transcript accumulation). `MemoryPeak` is a continuous kernel high-water mark (don't restart the
+    service, or it resets), so just read it **after a batch**:
+    `systemctl show watchy -p MemoryPeak -p MemoryCurrent`. Capture at least: **Sun 11:30 UTC** (heavy
+    3-way risk debate) and a **weekday 11:30 UTC** (4 analysts + possible concurrent Tier-1
+    signal-fired pipelines — the real high-concurrency case). sysstat enabled on the VPS (10-min
+    default) gives a system-wide RAM/swap time series; for finer shape run `sar -r 30 180` during a batch.
+  - **Decision rule:** Watchy idle 150 MB; **Tier 2 sequential** (`tier2.py:57`) → one pipeline at a
+    time. On 1 GB (≈900 MB usable) minus minimal Ubuntu (~100–150 MB): a Tier-2 peak **under ~500 MB
+    → 1 GB comfortably viable**; approaching ~700 MB or driving sustained swap → stay on a bigger box.
+    Add **1–2 GB swap** on a 1 GB host regardless (insurance for Tier-1 bursts; pool
+    `max(10, len(watchlist)+4)≈20`, `daemon.py:69`). Record the actual numbers here as they come in.
 
 - **VPS-only state to capture from the OLD VPS (NOT reconstructable from the repo):**
   1. **TradingAgents install** — *not* in `requirements.txt`/`pyproject.toml`. Separate install
@@ -48,16 +64,38 @@ the task here for now).
   migrating `schwab_tokens.db`) → `pytest` + smokes (`tests/test_e2e.py GOOG`, `scripts/validate_yfc.py`
   during market hours). Set system clock/UTC sanity (Tier 2 = 11:30 UTC).
 
-- **SSH access to the new LA VPS (机场节点拦截 workaround — REMEMBER THIS):** the proxy/airport node
-  used to reach the US-West VPS is "等级3" (US tier) with strict anti-abuse rules: **port 22 and
-  passive high ports 10001–65535 are blocked**; ICMP (`ping`) works, which is why ping succeeds but
-  SSH gets `Connection closed by ... port 22`. Two fixes:
-  - **Plan A (recommended):** move sshd to a port in **1024–9999** (e.g. **8022**) — the airport
-    unconditionally passes active ports in that range. Edit `/etc/ssh/sshd_config`, open the port in
-    UFW/firewalld **and** the provider's security group, `systemctl restart sshd`, then
-    `ssh -p 8022 root@<VPS_IP>`.
-  - **Plan B:** point a domain (`vps.yourdomain.com`) at the VPS IP and `ssh root@vps.yourdomain.com`
-    — domain-bearing requests are passed even on restricted ports (no VPS port change needed).
+- **SSH through the airport proxy (机场节点拦截 workaround — BATTLE-TESTED on hil-2 2026-06-14):**
+  the proxy/airport node ("等级3" US tier) **blocks port 22 and passive high ports 10001–65535**, but
+  **unconditionally passes active ports 1024–9999**; ICMP passes too (so `ping` works but `ssh`:22
+  gets `Connection closed`). Fix = run sshd on a port in 1024–9999 (we use **8022**). **DONE on the
+  current hil-2 box; redo on any new VPS.**
+  - **⚠️ Ubuntu 22.10+/24.04 socket-activates sshd (`ssh.socket`).** Editing `Port` in `sshd_config`
+    does nothing (the socket owns the port), AND the socket route is **unreliable for a 2nd port** —
+    `systemctl edit ssh.socket` with bare `ListenStream=22/8022` left the extra port "closed" (single
+    `sshd -D` doesn't service the extra fd) and dropped the **IPv4** listeners → **IPv4 refused on
+    BOTH ports, near-lockout** (recovered via the Hetzner web console). Don't use the socket route.
+  - **✅ Working method = ditch socket activation, use classic sshd** (keep 22 as a fallback +
+    out-of-band console open while doing this):
+    ```bash
+    printf 'Port 22\nPort 8022\n' | sudo tee /etc/ssh/sshd_config.d/port.conf
+    sudo sshd -t                              # validate config
+    sudo systemctl disable --now ssh.socket
+    sudo systemctl enable --now ssh.service
+    sudo systemctl restart ssh.service        # MUST restart explicitly; enable --now won't restart a running unit
+    sudo sshd -T | grep -i '^port'            # expect: port 22  +  port 8022
+    ss -tlnp | grep -E ':22|:8022'            # expect 0.0.0.0 + [::] on both, owned by sshd
+    sudo ufw allow 8022/tcp                    # if ufw active
+    ```
+  - **Verify in order** (each removes one variable): loopback on VPS `ssh -p 8022 -l watchy 127.0.0.1`
+    (host-key prompt = sshd serves 8022) → laptop **proxy OFF** `ssh -p 8022 -l watchy <IP>` (IPv4/ufw)
+    → laptop **proxy ON** (the goal: airport passes 8022). Use **`-l watchy`** not `watchy@host` — a
+    stray space before `@` makes ssh treat the *username* as the host (proxy fake-IP `198.18.0.0/15` in
+    the error = you hit the proxy's made-up IP, not the server).
+  - **Keep port 22** as a direct-access fallback (blocked via the airport anyway → no real exposure).
+    **Recovery if locked out:** out-of-band console — **Hetzner Cloud Console** for hil-2,
+    **Bandwagon KiwiVM** for the LA box. Bandwagon has **no cloud security group** (OS firewall only).
+  - **Plan B (no VPS change):** point a domain at the IP and `ssh user@vps.yourdomain.com` — the
+    airport passes domain-bearing requests even on restricted ports.
 
 ### 2026-06-13 — per-component DeepSeek cost tracking (TOKENCOST; commit 868c571)
 
