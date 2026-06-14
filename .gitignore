@@ -3,7 +3,10 @@ __pycache__/
 *.egg-info/
 dist/
 *.db
+*.db-shm
+*.db-wal
 *.log
+*.log.*
 .env
 secrets.yaml
 .venv/

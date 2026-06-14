@@ -85,8 +85,12 @@ Capture checklist + SSH workaround further down are reference for *if* we switch
      `watchy ALL=(root) NOPASSWD: /usr/bin/systemctl restart watchy` (mode 0440). `auto-update.sh` runs
      as `User=watchy` and restarts via `sudo systemctl restart watchy`; **without this drop-in the pull
      succeeds but the restart silently fails and the daemon runs STALE code indefinitely** — exactly the
-     bug found 2026-06-14 (disk at `9ffe27d`, daemon still on the 06-13 boot, ~1 day stale). Recreate
-     this drop-in on any new VPS. Verify with `sudo visudo -c`.
+     bug found 2026-06-14 (disk at `9ffe27d`, daemon still on the 06-13 boot, ~1 day stale).
+     **FIXED + DEPLOYED 2026-06-14** (commit `a5331a3`: sudo restart + `--ff-only` + loud errors;
+     sudoers drop-in created; daemon restarted onto current code at 13:53 UTC — TOKENCOST + live
+     watchlist now active). A standing `chmod +x` mode-diff on the VPS's `auto-update.sh` also had to
+     be discarded (`git checkout --`) so the script update could pull. Recreate the sudoers drop-in on
+     any new VPS. Verify with `sudo visudo -c`.
   7. **Any env vars** outside `secrets.yaml` (e.g. `DEEPSEEK_API_KEY` / Gemini) — the systemd unit
      sets none, but check the old VPS shell/env in case TradingAgents reads them.
   8. **`watchy` system user** + home `/home/watchy`; pyenv + Python 3.11.9 + virtualenv `trading`.
