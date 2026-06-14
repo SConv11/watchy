@@ -14,6 +14,20 @@ live Tier-2 RAM peak** (open thread below). **Decide before the 2026-07-02 renew
 leaves comfortable headroom on 1 GB → switch (saves money); if it runs hot → renew the current VPS.
 Capture checklist + SSH workaround further down are reference for *if* we switch.
 
+- **🆕 2026-06-14 — the VPS is becoming MULTI-TENANT (changes the downsize math).** User plans to run
+  **Docker Engine + docker compose + a CouchDB container (Obsidian LiveSync) + Cloudflare Tunnel
+  (cloudflared)**, and *maybe* a web backend (domain use undecided — only if GitHub Pages isn't
+  enough). Known new baseline = Docker (~70–100 MB) + CouchDB (~100–150 MB, spikes on compaction) +
+  cloudflared (~30–50 MB) ≈ **+200–300 MB before any web backend.** Stacked on Watchy's Tier-2 peak
+  (459 MB Sun; weekday unmeasured), this likely pushes a **1 GB box into swap during the daily batch
+  window** — and swap hurts the *interactive* tenants (LiveSync sync, web), not the batch daemon.
+  **Provisional verdict: 1 GB downsize now marginal-to-not-recommended → keep the 4 GB, or pick a
+  ~2 GB tier.** Notes: Cloudflare Tunnel = outbound-only ingress (no inbound ports; it can also carry
+  SSH and **obsolete the 8022 airport-port hack** — see SSH section below). Keep CouchDB off the public
+  net (localhost-bound, exposed only via the tunnel + Cloudflare Access). Watchy runs on the host
+  (systemd) while the new stack is containerized → don't bind-mount `~/watchy_config` into any
+  container. Disk: 20 GB gets tight with Docker images — watch it.
+
 - **⏳ OPEN THREAD — Tier-2 RAM peak (drives the downsize decision):**
   - **Measured so far:** live `watchy.service` **idle baseline = 150 MB** (`MemoryPeak`, CPU 3.17 s),
     over an 18h uptime (since 2026-06-13 09:31 UTC). ⚠️ **That window had NO Tier 2 run** — Sat
@@ -22,13 +36,27 @@ Capture checklist + SSH workaround further down are reference for *if* we switch
   - **Cross-check (local proxy, Windows/py3.13):** full import stack (numpy+pandas+yfinance+
     yfinance_cache+langchain_core+`TradingAgentsGraph`) ≈ **205 MB RSS**; **imports dominate, market
     data negligible** (~2.5 MB for 17 tickers). Linux/py3.11 lower — consistent with the live 150 MB.
-  - **Still to measure:** the peak *during an actual Tier 2 batch* (LangGraph message/debate-
-    transcript accumulation). `MemoryPeak` is a continuous kernel high-water mark (don't restart the
-    service, or it resets), so just read it **after a batch**:
-    `systemctl show watchy -p MemoryPeak -p MemoryCurrent`. Capture at least: **Sun 11:30 UTC** (heavy
-    3-way risk debate) and a **weekday 11:30 UTC** (4 analysts + possible concurrent Tier-1
-    signal-fired pipelines — the real high-concurrency case). sysstat enabled on the VPS (10-min
-    default) gives a system-wide RAM/swap time series; for finer shape run `sar -r 30 180` during a batch.
+  - **✅ Measured 2026-06-14 (Sun, 3-way risk-debate Tier 2):** `MemoryPeak = 483,819,520 B ≈ 461 MiB`
+    (climbed 459→461 after the batch finished). Single-pipeline peak, weekend (Tier 1 market-hours-gated
+    off) → **no concurrency**, NOT the absolute max. ⚠️ **MEASUREMENT WAS ON STALE CODE** — see the
+    auto-update bug below; the running daemon was 06-13 vintage (pre-TOKENCOST, old watchlist). RAM still
+    representative (TOKENCOST is zero-cost), but the live watchlist size may push the real peak a bit higher.
+  - **🔑 KEY FINDING — the daemon does NOT return to the 150 MB idle baseline after a batch.** At 13:37
+    UTC, ~2h *after* the 11:30 batch, `MemoryCurrent` was still **461 MiB** (≈ peak). CPython doesn't
+    return freed arenas to the OS, so the **resident floor in steady daily operation is ~460+ MB, not
+    150.** The 150 MB "idle" was an artifact of measuring *before the first batch / right after a restart*.
+    **This invalidates the earlier "459 < 500 → 1 GB comfortably viable" reasoning:** in steady state
+    Watchy holds ~460–500 MB continuously between restarts, and on a multi-tenant box (Docker+CouchDB+
+    cloudflared ≈ +250 MB) that's ~710–750 MB resident *before* any peak or web backend → **1 GB not
+    viable; keep 4 GB or use ~2 GB.** (Watch over several days: if `MemoryPeak` climbs each day with no
+    restart it's a leak, not just arena retention — frequent auto-restarts now mask it.)
+  - **Still to measure (the real ceiling):** a **weekday 11:30 UTC** run — different shape (4 analysts)
+    AND, because a 17-ticker sequential batch can run past 13:30 UTC (US open, EDT), **Tier-1 fired
+    pipelines can stack on the still-running Tier-2 batch** (pool ≈20). That concurrency is what today's
+    weekend number does NOT capture, so 459 MB is a strong favorable data point but **not yet the
+    provable max**. Read after a weekday batch:
+    `systemctl show watchy -p MemoryPeak -p MemoryCurrent` (don't restart the service or the high-water
+    mark resets). sysstat (10-min default) gives a system-wide RAM/swap series; `sar -r 30 180` for finer shape.
   - **Decision rule:** Watchy idle 150 MB; **Tier 2 sequential** (`tier2.py:57`) → one pipeline at a
     time. On 1 GB (≈900 MB usable) minus minimal Ubuntu (~100–150 MB): a Tier-2 peak **under ~500 MB
     → 1 GB comfortably viable**; approaching ~700 MB or driving sustained swap → stay on a bigger box.
@@ -53,6 +81,12 @@ Capture checklist + SSH workaround further down are reference for *if* we switch
   6. **systemd**: `watchy.service`, `watchy-update.service`, `watchy-update.timer` (all in repo).
      Copy to `/etc/systemd/system/`, `daemon-reload`, `enable --now watchy` **and**
      `enable --now watchy-update.timer`. Confirm the timer is actually enabled on the old VPS.
+     **⚠️ REQUIRED: the sudoers drop-in `/etc/sudoers.d/watchy-autoupdate`** containing
+     `watchy ALL=(root) NOPASSWD: /usr/bin/systemctl restart watchy` (mode 0440). `auto-update.sh` runs
+     as `User=watchy` and restarts via `sudo systemctl restart watchy`; **without this drop-in the pull
+     succeeds but the restart silently fails and the daemon runs STALE code indefinitely** — exactly the
+     bug found 2026-06-14 (disk at `9ffe27d`, daemon still on the 06-13 boot, ~1 day stale). Recreate
+     this drop-in on any new VPS. Verify with `sudo visudo -c`.
   7. **Any env vars** outside `secrets.yaml` (e.g. `DEEPSEEK_API_KEY` / Gemini) — the systemd unit
      sets none, but check the old VPS shell/env in case TradingAgents reads them.
   8. **`watchy` system user** + home `/home/watchy`; pyenv + Python 3.11.9 + virtualenv `trading`.
