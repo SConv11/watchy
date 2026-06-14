@@ -3,7 +3,61 @@
 Watchy is a stock-monitoring daemon built on top of TradingAgents.
 Tier 1 = hourly technical signal scanner (no LLM). Tier 2 = scheduled daily LLM pipeline.
 
-## Current status — read first (updated 2026-06-13)
+## Current status — read first (updated 2026-06-14)
+
+### 2026-06-14 — PLANNED: VPS migration (do this BEFORE 2026-07-02)
+
+**Why:** the current VPS (3-core / 4 GB) is overkill for Watchy and bills on **2026-07-02**.
+Migrating to **Bandwagon (搬瓦工) LA `USCA_2`**: **20 GB disk, 1 GB RAM, 2× CPU, $50/yr**.
+Must complete the move **before 2026-07-02**. Not started yet — the live capture will be
+done *together with the user* in a later session (user's call: "到时候一起做"). This block
+is the checklist of WHAT to capture/recreate so nothing is lost. **When we actually do it,
+create `docs/VPS_MIGRATION.md` as the runbook** (user asked to defer the doc; just record
+the task here for now).
+
+- **⚠️ RAM drops 4 GB → 1 GB.** Tier 2 runs the TradingAgents LLM pipeline + pandas; 1 GB is
+  tight. **Add swap (≥2 GB) on the new VPS** and watch memory during the first 11:30 UTC Tier 2
+  batch (17 tickers). This is the main migration risk.
+
+- **VPS-only state to capture from the OLD VPS (NOT reconstructable from the repo):**
+  1. **TradingAgents install** — *not* in `requirements.txt`/`pyproject.toml`. Separate install
+     (project_doc says `~/TradingAgents`, `pip install -e .`). Capture: source path, **git remote +
+     commit**, and how it was installed. This is the #1 thing that will break a from-scratch setup.
+  2. **Full `pip freeze`** of the `trading` pyenv (Python **3.11.9**) — pins the exact transitive
+     LLM deps (langchain-core, deepseek, google-genai, etc.). Reproduce the env from this.
+  3. **`~/watchy/state.db`** — live `derived_target_price` seeds + the `kv` table (Schwab 7-day
+     clock + `KV_EXPIRY_WARNED_AT`). **Copy it over** — losing it re-bootstraps the 8% Tier 2 gate
+     (a few days of higher DeepSeek cost). Schema changes need `ALTER TABLE` (see Conventions).
+  4. **`~/watchy_config/`** — `secrets.yaml`, `positions.yaml`, `positions_cache.json`, and
+     `schwab_tokens.db`. (Secrets stay off the repo and off the local Windows box.)
+  5. **Repo working tree at `/home/watchy/watchy`** — check `git status` for **uncommitted edits**,
+     esp. the **watchlist in `config.yaml`**: under systemd the daemon reads `~/watchy/config.yaml`
+     (repo copy, default path — the unit does NOT set `WATCHY_CONFIG`), so the live watchlist may
+     differ from origin/main. Commit/push or carry the diff over.
+  6. **systemd**: `watchy.service`, `watchy-update.service`, `watchy-update.timer` (all in repo).
+     Copy to `/etc/systemd/system/`, `daemon-reload`, `enable --now watchy` **and**
+     `enable --now watchy-update.timer`. Confirm the timer is actually enabled on the old VPS.
+  7. **Any env vars** outside `secrets.yaml` (e.g. `DEEPSEEK_API_KEY` / Gemini) — the systemd unit
+     sets none, but check the old VPS shell/env in case TradingAgents reads them.
+  8. **`watchy` system user** + home `/home/watchy`; pyenv + Python 3.11.9 + virtualenv `trading`.
+
+- **New-VPS setup order:** create `watchy` user → install pyenv + Python 3.11.9 + `trading` venv →
+  install TradingAgents (item 1) → `git clone` watchy to `~/watchy` + `pip install -e ~/watchy` →
+  restore `~/watchy_config/` + `state.db` → copy systemd units + enable service & timer → re-run
+  Schwab OAuth fresh (`scripts/schwab_oauth.py --force`, issues a new 7-day token — easier than
+  migrating `schwab_tokens.db`) → `pytest` + smokes (`tests/test_e2e.py GOOG`, `scripts/validate_yfc.py`
+  during market hours). Set system clock/UTC sanity (Tier 2 = 11:30 UTC).
+
+- **SSH access to the new LA VPS (机场节点拦截 workaround — REMEMBER THIS):** the proxy/airport node
+  used to reach the US-West VPS is "等级3" (US tier) with strict anti-abuse rules: **port 22 and
+  passive high ports 10001–65535 are blocked**; ICMP (`ping`) works, which is why ping succeeds but
+  SSH gets `Connection closed by ... port 22`. Two fixes:
+  - **Plan A (recommended):** move sshd to a port in **1024–9999** (e.g. **8022**) — the airport
+    unconditionally passes active ports in that range. Edit `/etc/ssh/sshd_config`, open the port in
+    UFW/firewalld **and** the provider's security group, `systemctl restart sshd`, then
+    `ssh -p 8022 root@<VPS_IP>`.
+  - **Plan B:** point a domain (`vps.yourdomain.com`) at the VPS IP and `ssh root@vps.yourdomain.com`
+    — domain-bearing requests are passed even on restricted ports (no VPS port change needed).
 
 ### 2026-06-13 — per-component DeepSeek cost tracking (TOKENCOST; commit 868c571)
 
