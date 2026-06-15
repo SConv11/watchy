@@ -1,0 +1,11 @@
+- [Watchy VPS 部署](watchy-vps-deployment.md) — 部署到 Ubuntu 24.04 VPS，已上线运行；**正式上线日 = 2026-06-09 美东交易日**（完整功能集）
+- [yfinance 429 Rate Limit](yfinance-429-rate-limit.md) — 已修（session + fallback），待观察 VPS Tier 2 批量请求
+- [Watchy VPS Bugs](watchy-vps-bugs.md) — 5 个 bug 全修完；第二轮扫描提了 #13/#14，含 is-False 严重 bug
+- [Tier 2 Risk Cadence](watchy-tier2-risk-cadence.md) — Tier 2 改：日跑 4 analysts，周日跑 3-way risk debate（#14 决议）
+- [Issue Plan](watchy-issue-plan.md) — backlog #1–#16 全做完（含 #3 截断重修、#15 Tier 2 邻近门控、#16 自动目标价）；#17 close-the-loop + #18 LLM 对比分析 开着（用户选择，细节待定）；**#4 Schwab 已上线（2026-06-10 app 批准 + OAuth 完成，实时层生效）**：schwabdev 3.x 迁移 + 批次共享持仓 + token 过期告警；**运维：每 ≤7 天在 VPS 用 trading-pyenv 跑 `scripts/schwab_oauth.py --force` 重新授权（必须 --force 才签发新 7 天 token；普通重跑只刷 access token、不重置 7 天计时）；过期告警分两档 ≤2 天/≤1 天，醒目边框**
+- [Git Workflow](watchy-git-workflow.md) — 双机同步：开工前 pull，收工/checkpoint 时 push；提交 .claude/，不提交 secrets；冲突就停下问用户
+- [API 成本基线](watchy-api-cost-baseline.md) — 首日(6/9)：Gemini $0.5 / DeepSeek ¥4(分开记)；月估 $10.5 + ¥84；DeepSeek=UTC日切 Gemini=PT日切，对账用美东日期别用北京日期；V4 已无 off-peak 折扣；**含 TOKENCOST 组件级实测拆解(6/14 周日批 $0.54)：pro 模型 30%/2-3调用、PM+Market Analyst 最贵；降本杠杆=8%门控+RM降flash**
+- [Memory 跨机同步](watchy-memory-sync.md) — memory 整目录提交进 repo `.claude/memory/`，SessionEnd hook(`scripts/sync_memory.sh`)自动镜像+commit；hook 写在 settings.local.json(每机一份、路径机器相关)；本机已配，另一台机照做换自己路径；CLAUDE.md 已据此瘦身
+- [Tier 2 门控已启用](watchy-pending-enable-tier2-gate.md) — #15 已启用：改名 `min_price_proximity_pct` + 全局默认,config.yaml 顶层设 8.0(commit 3449c1d);待 VPS pull+restart 生效;靠 #16 derived target 自举,几天后才显省钱
+- [VPS 降配决策](watchy-vps-migration.md) — **2026-07-02 续费前定**;**1GB 基本出局**:周日 Tier-2 峰值实测 461MiB,但**关键是跑完不回落**(稳态常驻~460MB,150「idle」只是重启后假象),再叠计划中的 Docker+CouchDB+cloudflared(~+250MB)→ 稳态 ~710-750MB → 留 4G 或上 ~2G;工作日峰值仍可补测;**附带修了 auto-update 静默不重启 bug**(watchy 用户无权重启→pull 成功但 daemon 跑旧代码~1天;已修+部署 commit 7743291,需 sudoers drop-in);从旧机抓取清单 + 新机搭建顺序见此文件本身
+- [SSH 机场端口拦截](ssh-airport-port-block.md) — **已在 hil-2 跑通(2026-06-14)**:机场屏蔽 22+被动高位口、放行主动 1024-9999 → sshd 跑 8022;**Ubuntu24.04 必须关 socket activation 用经典 sshd**(socket 路子弄丢 IPv4 差点锁死),改完显式 restart,留 22 兜底,带外 console 救命;换新 VPS 照此重做
