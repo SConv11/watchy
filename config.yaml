@@ -24,10 +24,10 @@ watchlist:
   - "VRT"
   - "APH"
   - "HUBB"
-
-  # - "LRCX"
-  # - "KLAC"
-  # - "RMBS"
+  - "LRCX"
+  - "KLAC"
+  - "RMBS"
+  - "LUMN"
 
   # - "TSLA"
   # - "SOXX"
