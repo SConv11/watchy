@@ -26,6 +26,14 @@ class TickerConfig:
     # #16 auto-derived one). Sunday and held tickers always run. A value here
     # overrides the global default for this ticker.
     min_price_proximity_pct: float | None = None
+    # Optional per-ticker ATR-adaptive proximity band (#15 follow-up). When set
+    # (or inherited from WatchyConfig.atr_proximity_mult), the gate band becomes
+    # mult x ATR% (ATR% = avg_atr_20d / price x 100) instead of the fixed
+    # min_price_proximity_pct — i.e. "skip when price is more than `mult` typical
+    # trading days of movement from target". Clamped to the global floor/ceiling.
+    # Falls back to the fixed pct when ATR data is unavailable. Overrides the
+    # global mult for this ticker.
+    atr_proximity_mult: float | None = None
 
 
 @dataclass
@@ -88,6 +96,16 @@ class WatchyConfig:
     # watch-only ticker that doesn't set its own min_price_proximity_pct. None
     # disables the gate globally. Held tickers and Sunday are never gated.
     min_price_proximity_pct: float | None = None
+    # Global ATR-adaptive proximity band (#15 follow-up), applied to every
+    # watch-only ticker that doesn't set its own atr_proximity_mult. When set
+    # (and ATR data is available) the gate band is mult x ATR% instead of the
+    # fixed min_price_proximity_pct; otherwise it falls back to the fixed pct.
+    # None keeps the fixed-pct behaviour. See TickerConfig.atr_proximity_mult.
+    atr_proximity_mult: float | None = None
+    # Clamp bounds for an ATR-derived band, so a freak low/high-volatility
+    # reading can't make the band absurd. Only used when an ATR mult is active.
+    proximity_pct_floor: float = 4.0
+    proximity_pct_ceiling: float = 20.0
 
     def get_ticker_config(self, ticker: str) -> TickerConfig | None:
         """Return the TickerConfig for a symbol (case-insensitive), or None."""
@@ -122,6 +140,9 @@ class WatchyConfig:
             log_file=raw.get("log_file", "~/watchy/watchy.log"),
             tier2_throttle_s=raw.get("tier2_throttle_s", 2.0),
             min_price_proximity_pct=raw.get("min_price_proximity_pct"),
+            atr_proximity_mult=raw.get("atr_proximity_mult"),
+            proximity_pct_floor=raw.get("proximity_pct_floor", 4.0),
+            proximity_pct_ceiling=raw.get("proximity_pct_ceiling", 20.0),
         )
 
 

@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from watchy.advisor import get_advice, parse_price
 from watchy.config import TickerConfig, WatchyConfig
-from watchy.indicators import compute_indicators
+from watchy.indicators import IndicatorBundle, compute_indicators
 from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
 from watchy.orchestrator import get_scheduled_spec, run_pipeline
@@ -42,9 +43,9 @@ def run_daily_scan(
     Returns a dict mapping ticker → pipeline result.
     """
     results: dict[str, dict[str, Any]] = {}
-    tickers = [tc.ticker for tc in config.watchlist]
+    now = datetime.now(timezone.utc)
 
-    logger.info("Tier 2 daily scan starting for %d tickers", len(tickers))
+    logger.info("Tier 2 daily scan starting for %d tickers", len(config.watchlist))
 
     # Fetch positions once for the whole batch and reuse the snapshot across every
     # ticker (the account is the same for all of them). This both avoids N redundant
@@ -54,12 +55,31 @@ def run_daily_scan(
     position_source = get_position_source(config)
     monitor_schwab(config, store, notifier, position_source)
 
-    for i, ticker in enumerate(tickers):
-        if i > 0 and config.tier2_throttle_s > 0:
-            time.sleep(config.tier2_throttle_s)
+    # Pre-fetch indicators for every ticker up front (throttled to avoid a
+    # yfinance burst, #1) so we can both order the batch by priority and reuse
+    # each bundle in the pipeline instead of re-fetching it.
+    plan = _prefetch_plan(config, store, position_source, now)
+
+    # Run in priority order (#21): held tickers first (capital at risk), then
+    # watch-only nearest-to-target (most actionable), no-target/no-price last.
+    # A long batch is interruptible (auto-update restart, crash, token expiry,
+    # 429), so the most important names should be analysed before any of those.
+    for entry in _ordered_run_plan(plan):
+        ticker = entry.ticker
+        if entry.skip:
+            pct = _effective_proximity_pct(entry.tc, config, entry.avg_atr, entry.price)
+            logger.info(
+                "Tier 2 skip %s — not held, price %.2f outside %.2f%% of entry "
+                "target %.2f (weekday gate)",
+                ticker, entry.price, pct, entry.target,
+            )
+            results[ticker] = {
+                "ticker": ticker, "skipped": "out_of_proximity", "target": entry.target,
+            }
+            continue
         try:
             results[ticker] = _run_ticker(
-                ticker, config, store, notifier, position_source,
+                entry, config, store, notifier, position_source,
                 pipeline_runner, ticker_locks,
             )
         except Exception as exc:
@@ -68,12 +88,71 @@ def run_daily_scan(
             results[ticker] = {"error": str(exc)}
 
     succeeded = sum(1 for r in results.values() if "error" not in r)
-    logger.info("Tier 2 daily scan complete: %d/%d succeeded", succeeded, len(tickers))
+    logger.info(
+        "Tier 2 daily scan complete: %d/%d succeeded", succeeded, len(config.watchlist)
+    )
     return results
 
 
+@dataclass
+class _PlanEntry:
+    """One ticker's pre-fetched context for a Tier 2 batch (#21)."""
+    ticker: str
+    tc: TickerConfig | None
+    bundle: IndicatorBundle | None
+    state: dict[str, Any]
+    held: bool
+    price: float | None
+    avg_atr: float | None
+    target: float | None
+    skip: bool
+
+
+def _prefetch_plan(
+    config: WatchyConfig,
+    store: StateStore,
+    position_source: Any,
+    now: datetime,
+) -> list[_PlanEntry]:
+    """Compute indicators + gate decision for every watchlist ticker up front.
+
+    Throttled between fetches (#1). The resulting bundle is reused by the
+    pipeline so no ticker is fetched twice.
+    """
+    plan: list[_PlanEntry] = []
+    for i, tc in enumerate(config.watchlist):
+        if i > 0 and config.tier2_throttle_s > 0:
+            time.sleep(config.tier2_throttle_s)
+        ticker = tc.ticker
+        bundle = compute_indicators(ticker)
+        price = bundle.current_price if bundle is not None else None
+        avg_atr = (bundle.avg_atr_20d or bundle.atr) if bundle is not None else None
+        state = store.get_ticker_state(ticker)
+        held = _is_held(position_source, ticker)
+        target = _effective_target(tc, state)
+        skip = _should_skip_tier2(price, tc, state, now, held, config, avg_atr)
+        plan.append(
+            _PlanEntry(ticker, tc, bundle, state, held, price, avg_atr, target, skip)
+        )
+    return plan
+
+
+def _ordered_run_plan(plan: list[_PlanEntry]) -> list[_PlanEntry]:
+    """Order a batch by priority (#21): held first, then watch-only by ascending
+    distance-to-target, then no-target/no-price last. Stable, so watchlist order
+    breaks ties (and orders the no-target group)."""
+    def key(e: _PlanEntry) -> tuple[int, float]:
+        if e.held:
+            return (0, 0.0)
+        if e.target and e.price and e.target > 0:
+            return (1, abs(e.price - e.target) / e.target)
+        return (2, 0.0)
+
+    return sorted(plan, key=key)
+
+
 def _run_ticker(
-    ticker: str,
+    entry: _PlanEntry,
     config: WatchyConfig,
     store: StateStore,
     notifier: TelegramNotifier,
@@ -81,15 +160,20 @@ def _run_ticker(
     pipeline_runner: Any = None,
     ticker_locks: TickerLockRegistry | None = None,
 ) -> dict[str, Any]:
+    """Run the Tier 2 pipeline for one pre-planned ticker.
+
+    The proximity gate (#15) was already decided in _prefetch_plan; the caller
+    skips gated tickers, so this only runs names worth the tokens. The bundle
+    pre-fetched there is reused for stage context (no second yfinance fetch).
+    """
+    ticker = entry.ticker
     logger.info("Tier 2: %s", ticker)
     now = datetime.now(timezone.utc)
 
-    # enrich with indicators for stage context
-    bundle = compute_indicators(ticker)
+    # stage context reuses the pre-fetched bundle (#21) — no re-fetch.
+    bundle = entry.bundle
     stage_context = {}
-    price = None
     if bundle is not None:
-        price = bundle.current_price
         stage_context = {
             "sepa_stage": bundle.sepa_stage,
             "current_price": bundle.current_price,
@@ -97,24 +181,6 @@ def _run_ticker(
             "sma_200": bundle.sma_200,
             "rsi": bundle.rsi,
         }
-
-    # Tier 2 price-proximity gate (#15): on weekdays, skip the expensive LLM
-    # pipeline for a *watch* (non-held) ticker trading far from its entry target
-    # (manual or #16 auto-derived). NEVER skip a held ticker — you have capital at
-    # risk, so daily analysis is worth the tokens regardless of where price sits.
-    # Sunday is always run (weekly full update).
-    tc = config.get_ticker_config(ticker)
-    state = store.get_ticker_state(ticker)
-    held = _is_held(position_source, ticker)
-    if _should_skip_tier2(price, tc, state, now, held, config.min_price_proximity_pct):
-        target = _effective_target(tc, state)
-        pct = _effective_proximity_pct(tc, config.min_price_proximity_pct)
-        logger.info(
-            "Tier 2 skip %s — not held, price %.2f outside %.2f%% of entry target %.2f "
-            "(weekday gate)",
-            ticker, price, pct, target,
-        )
-        return {"ticker": ticker, "skipped": "out_of_proximity", "target": target}
 
     # Serialize against a concurrent Tier 1 pipeline for the same ticker.
     from contextlib import nullcontext
@@ -188,16 +254,30 @@ def _is_held(position_source: Any, ticker: str) -> bool:
 
 
 def _effective_proximity_pct(
-    tc: TickerConfig | None, global_pct: float | None
+    tc: TickerConfig | None,
+    config: WatchyConfig | None,
+    avg_atr: float | None = None,
+    price: float | None = None,
 ) -> float | None:
     """The proximity percent that gates this ticker (#15).
 
-    A per-ticker ``min_price_proximity_pct`` overrides the global default
-    (``WatchyConfig.min_price_proximity_pct``); None at both levels disables.
+    ATR-adaptive mode (#15 follow-up): if an ``atr_proximity_mult`` is set
+    (per-ticker, else the global default) *and* ATR data is available, the band
+    is ``mult * ATR%`` (ATR% = avg_atr / price * 100), clamped to the global
+    floor/ceiling. Otherwise it falls back to the fixed percent — a per-ticker
+    ``min_price_proximity_pct`` overriding the global default. None disables.
     """
+    g_mult = config.atr_proximity_mult if config is not None else None
+    mult = tc.atr_proximity_mult if (tc is not None and tc.atr_proximity_mult is not None) else g_mult
+    if mult is not None and avg_atr and price and price > 0:
+        pct = mult * (avg_atr / price * 100.0)
+        if config is not None:
+            pct = min(config.proximity_pct_ceiling, max(config.proximity_pct_floor, pct))
+        return pct
+
     if tc is not None and tc.min_price_proximity_pct is not None:
         return tc.min_price_proximity_pct
-    return global_pct
+    return config.min_price_proximity_pct if config is not None else None
 
 
 def _should_skip_tier2(
@@ -206,20 +286,21 @@ def _should_skip_tier2(
     state: dict[str, Any],
     now: datetime,
     held: bool,
-    global_pct: float | None = None,
+    config: WatchyConfig | None = None,
+    avg_atr: float | None = None,
 ) -> bool:
     """Whether Tier 2 should skip this ticker on this day (#15).
 
     Held tickers are never gated (capital at risk → always analyse). Sunday is
     never gated (weekly full run). Otherwise skip only when a proximity percent
-    applies (per-ticker min_price_proximity_pct, else the global default) and
-    price is outside that band of the effective *entry* target.
+    applies (ATR-adaptive or fixed, per-ticker or global) and price is outside
+    that band of the effective *entry* target.
     """
     if held:                 # never gate a position you hold
         return False
     if now.weekday() == 6:   # Sunday — always run
         return False
-    pct = _effective_proximity_pct(tc, global_pct)
+    pct = _effective_proximity_pct(tc, config, avg_atr, price)
     if pct is None:
         return False
     return is_outside_proximity(price, _effective_target(tc, state), pct)

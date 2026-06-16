@@ -64,6 +64,21 @@ stores it in `state.db` (a manual value always wins). Note **Tier 1 is never
 gated** — it's the always-on 30-minute radar that covers far-from-target names
 between gated Tier 2 runs.
 
+**ATR-adaptive band (#15 follow-up, optional):** instead of a fixed percent, set
+`atr_proximity_mult` (global, or per-ticker) to make the band `mult × ATR%`
+(ATR% = `avg_atr_20d / price × 100`) — i.e. *skip when price is more than `mult`
+typical trading days of movement from target*. Volatile names get a wider band,
+calm names a narrower one. The band is clamped to `[proximity_pct_floor,
+proximity_pct_ceiling]` (default 4–20%) and falls back to the fixed percent when
+ATR data is unavailable. Calibrate the multiple against your watchlist with
+`scripts/calibrate_atr_proximity.py` before enabling.
+
+**Tier 2 batch order (#21):** the daily batch runs **held tickers first** (capital
+at risk), then watch-only **nearest-to-target first**, then no-target names last —
+so if a long batch is interrupted (auto-update restart, crash, token expiry), the
+most important names were analysed first. Indicators are pre-fetched once per
+ticker (throttled) and reused by the pipeline (no double fetch).
+
 **After every analysis**, Watchy fetches the ticker's current position, calls a
 lightweight LLM (Gemini by default) to synthesize the analysis report + position
 into actionable advice, and pushes a natural-language summary to Telegram.
@@ -152,6 +167,7 @@ See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key se
 |---------|---------|
 | `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 weekday gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on Sunday or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
 | `min_price_proximity_pct` | **Global default** percent for the Tier 2 proximity gate (#15), applied to every watch-only (non-held) ticker; on weekdays skip the daily LLM when price is farther than this from the entry target. Held tickers and Sunday always run; Tier 1 is unaffected. Override per-ticker with the same key. Remove to disable globally. |
+| `atr_proximity_mult` | Optional ATR-adaptive band (#15 follow-up), global or per-ticker. When set (and ATR data is available), the gate band is `mult × ATR%` (`ATR% = avg_atr_20d / price × 100`) instead of the fixed percent — wider for volatile names, narrower for calm ones. Clamped to `[proximity_pct_floor, proximity_pct_ceiling]` (default 4–20%); falls back to `min_price_proximity_pct` without ATR data. Calibrate with `scripts/calibrate_atr_proximity.py`. |
 | `signal_thresholds` | Detection thresholds for RSI, volume, ATR, etc. |
 | `cooldown` | Per-signal cooldown window to suppress repeat pushes |
 | `tier2_throttle_s` | Seconds to sleep between tickers in a Tier 2 daily scan (default 2.0), to smooth yfinance requests and avoid rate limits |

@@ -38,6 +38,10 @@
 
 **Tier 2 价格邻近门控（price-proximity gate，#15）**：用顶层 `min_price_proximity_pct` 设一个**全局默认**百分比（自动套到所有 watch-only 票；也可在长表里按票用同名键 `min_price_proximity_pct` 覆盖），**工作日**若现价离 **入场目标价（entry target）** 超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）。门控只针对 **watch-only（非持仓）** 的票：**只要当前持有该票（position source 查到非零持仓），Tier 2 永远运行**——有资金敞口就值得每天分析，与价格无关（持仓查询出错时也按"持有"处理，宁可多跑）。**周日永远运行**（每周一次完整更新，含新闻）。入场目标价优先用手动 `target_price`，否则用 **自动推导值（#16）**：每次 Tier 2 运行时从顾问输出的结构化 `Target:` 字段提取（语义明确为"建仓/加仓的入场价"，不是止损也不是止盈）并存入 `state.db`（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
 
+**ATR 自适应带宽（#15 后续，可选）**：不用固定百分比，设 `atr_proximity_mult`（全局或按票），门控带宽变成 `mult × ATR%`（`ATR% = avg_atr_20d / price × 100`），即"现价离目标超过 `mult` 个交易日的常规波动才跳过"——波动大的票带宽更宽、安静的票更窄。带宽钳到 `[proximity_pct_floor, proximity_pct_ceiling]`（默认 4–20%），ATR 数据缺失时回退固定百分比。启用前先用 `scripts/calibrate_atr_proximity.py` 校准 mult。
+
+**Tier 2 批次顺序（#21）**：每日批次**先跑持仓票**（有资金敞口），再跑 watch-only 中**离目标最近**的，无目标价的票排最后——这样长批次被打断（auto-update 重启、崩溃、token 过期）时，最重要的票已经分析过。指标每票预取一次（throttled）并被流水线复用，不重复抓取。
+
 **每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将分析报告与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。
 
 **持仓数据源（position source，#4）是分层的，保证 Schwab 无法刷新时仍可用**：
@@ -121,6 +125,7 @@ sudo systemctl enable --now watchy-update.timer
 |--------|------|
 | `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间、可选的 `target_price`，以及按票覆盖的 `min_price_proximity_pct`（Tier 2 工作日门控，#15，默认取顶层全局值；目标价缺省时用 #16 自动推导值，持仓票与周日永不门控）。Tier 1 不做邻近门控，交易时段内始终扫描 |
 | `min_price_proximity_pct` | Tier 2 邻近门控（#15）的**全局默认**百分比，套到所有 watch-only（非持仓）票；工作日现价离入场目标价超过该值就跳过当日 LLM。持仓票与周日永不门控，Tier 1 不受影响。可按票用同名键覆盖；删除/留空即全局关闭 |
+| `atr_proximity_mult` | 可选的 ATR 自适应带宽（#15 后续），全局或按票。设了且有 ATR 数据时，门控带宽 = `mult × ATR%`（`ATR% = avg_atr_20d / price × 100`），替代固定百分比——波动大的票更宽、安静的更窄。钳到 `[proximity_pct_floor, proximity_pct_ceiling]`（默认 4–20%）；无 ATR 数据时回退 `min_price_proximity_pct`。用 `scripts/calibrate_atr_proximity.py` 校准 |
 | `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
 | `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
 | `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |

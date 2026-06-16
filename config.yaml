@@ -46,6 +46,8 @@ watchlist:
   #   # below): e.g. set a huge percent to effectively never gate this name, or a
   #   # smaller one to gate it tighter than the default.
   #   min_price_proximity_pct: 8.0
+  #   # Per-ticker ATR-adaptive band override (overrides the global mult below).
+  #   atr_proximity_mult: 5.0
 
 # Tier 2 price-proximity gate (#15) — global default applied to every watch-only
 # (non-held) ticker. On weekdays, skip the daily LLM pipeline when price is farther
@@ -54,6 +56,18 @@ watchlist:
 # A per-ticker min_price_proximity_pct (long-form watchlist above) overrides this.
 # Remove this line to disable the gate globally.
 min_price_proximity_pct: 8.0
+
+# Optional ATR-adaptive band (#15 follow-up). When set, the gate band becomes
+# atr_proximity_mult x ATR% (ATR% = avg_atr_20d / price x 100) instead of the
+# fixed percent above — i.e. "skip when price is more than `mult` typical trading
+# days of movement from target". Volatile names get a wider band, calm names a
+# narrower one. Clamped to [proximity_pct_floor, proximity_pct_ceiling]; falls
+# back to the fixed percent when ATR data is unavailable. Leave commented to keep
+# the fixed-percent behaviour. Calibrate the mult with
+# scripts/calibrate_atr_proximity.py before enabling.
+# atr_proximity_mult: 5.0
+# proximity_pct_floor: 4.0
+# proximity_pct_ceiling: 20.0
 
 # Thresholds & cooldowns below are OPTIONAL — defaults are in code.
 # Uncomment any section to override.
