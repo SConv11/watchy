@@ -65,7 +65,9 @@ min_price_proximity_pct: 8.0
 # back to the fixed percent when ATR data is unavailable. Leave commented to keep
 # the fixed-percent behaviour. Calibrate the mult with
 # scripts/calibrate_atr_proximity.py before enabling.
-# atr_proximity_mult: 5.0
+# Calibrated 2026-06-16 against the live watchlist: x3 skips ~9/21 (keeps cost
+# savings) while no longer silencing volatile-but-near names (MOD, NVDA, ...).
+atr_proximity_mult: 3.0
 # proximity_pct_floor: 4.0
 # proximity_pct_ceiling: 20.0
 
