@@ -78,6 +78,19 @@ metadata:
 - **功能归组(降本杠杆):** 两个 Manager(pro)29.4% | 4 分析师 34% | **风险辩论(激进+保守+中性)20.6%——周日专属,周成本非日成本** | 多空辩论 13.9% | Trader+unknown 2%。
 - **可砍处(按性价比):** ①真正杠杆是 **8% 邻近门控**(工作日整票跳过)——已启用 [[watchy-pending-enable-tier2-gate]]。②大降本就把 **Research Manager 降到 flash**(最大单一结构杠杆,但终审质量风险最高,PM 建议保 pro)。③Market Analyst 减抓取指标数/缩回看窗(纯输入侧,不碰质量)。④风险辩论一周才一次,动它收益有限。
 
+### 工作日实测补齐 — 2026-06-15(周一,`...|risk0`,无风险辩论)
+- **B 工作日全量 16 票:合计 $0.436,均 $0.0272/票**($0.023–0.033)。vs 周日 $0.0336 → **同票配对平均 −$0.0064/票(−19%)**(最大降 EMR −0.0106/AVGO −0.0097/NVDA −0.0083)。
+- **省的钱几乎全在 flash 侧**:`risk0` 砍掉 **Conservative + Neutral** 两个风险分析师(各 ~$0.002)+ 缩 RM/PM 上下文。**注意 Aggressive 在 risk0 仍保留**——"无风险辩论"是砍 2 个不是 3 个。
+- **pro 占比反升(地板效应):** AMZN 周日 pro 30% → 工作日 34%。flash 随分析师减少而降,**pro(RM+PM)是固定地板**(2 调用不变)→ 越省 pro 占比越高,印证"降 RM 到 flash"是最大结构杠杆。
+- **盘中 2 分析师重扫 `[market+social]|risk0` ≈ 半价**($0.015–0.018/次,全量的一半)。一票一天可被重扫多次(6/15:KLAC×4、LRCX×3、AMAT×2)→ **工作日真实账单里易忽略的累加项**。
+- ⚠️ **异常值:** `6/15 14:09 EMR [market+social]=$0.0292`(其它重扫的 ~2 倍),根因单个 **Market Analyst in=193,073 tok / 单节点 $0.0141** 一次失控大输入回灌;偶发——根因+修法见 issue #20。
+
+### TradingAgents 调优 → 暂不修,记 issue #20(2026-06-16)
+源码在 vendored `~/TradingAgents`(upstream TauricResearch/main,已带未追踪本地补丁)→ 改它先要追踪机制(`patches/tradingagents.patch` 或 fork)。两件已查清根因+写好 patch,#20 待做:
+- **A. risk0 风险位是 Aggressive 不是 Neutral(偏向 bug,非成本):** 图拓扑必然——`setup.py` Trader→Aggressive 无条件边 + 门控只在首发言后判,risk0(max_risk=0)下 Aggressive 跑一次直进 PM。**决定换 Neutral**(同价、去偏向、PM prompt 仍连贯;删掉会让 PM 的"synthesize the debate" 收到空 history → 退化)。Neutral debator 本就处理"首位发言"。周日 risk1 不变。
+- **B. Market Analyst 降上下文(成本):** 指标恒用 5y 缓存算(`stockstats_utils.load_ohlcv:64`)→ look_back/价格窗都是**显示窗,砍它不坏 200_sma**。做 A(夹 get_stock_data≤120d,封死 EMR 193k 爆炸)+ B(get_indicators look_back 30→14),hold D(指标 8→5 动分析广度),C 可选(去周末 N/A 行)。
+- ⚠️ 部署:只改本机笔记本没用(daemon 在 VPS 跑),且 upstream pull 会覆盖未追踪改动;VPS 上线避开 Tier-2 窗口(~11:30–13:00 UTC)。
+
 ## DeepSeek V4 已无 off-peak 折扣
 - off-peak 折扣窗（16:30–00:30 UTC，V3 五折 / R1 2.5 折）**只覆盖旧的 V3/R1**。
 - **V4-Pro 把降价做成永久价**，替代了时段折扣；官方 pricing 页对 V4 无任何时段折扣字样。
