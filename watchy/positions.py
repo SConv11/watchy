@@ -88,8 +88,13 @@ def render_portfolio(summary: AccountSummary) -> str:
         f"Account: {summary.account_id}",
         f"  Total value: ${summary.total_value:,.2f}",
     ]
-    if summary.buying_power is not None:
-        lines.append(f"  Buying power: ${summary.buying_power:,.2f}")
+    # Deliberately NOT rendering buying_power (#22): on a margin account it's the
+    # leveraged purchasing limit (here ~3x the account), not net worth. The LLM
+    # kept adding it to Total value to fabricate an inflated denominator, badly
+    # understating concentration (a 32% position rendered as 7.7%) — the unsafe
+    # direction. Total value (= liquidationValue, already includes cash) is the
+    # only concentration denominator. buying_power stays on AccountSummary for
+    # caching/round-trips; it is just never shown to the advisor.
     if summary.cash_balance is not None:
         lines.append(f"  Cash: ${summary.cash_balance:,.2f}")
     lines.append(f"  Positions held: {len(summary.positions)}")

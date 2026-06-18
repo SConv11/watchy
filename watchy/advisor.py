@@ -36,6 +36,10 @@ position that looks heavy versus equities alone can be perfectly healthy versus
 the full account (e.g. a $420 holding is 24% of $1,700 in stocks but only 12.6%
 of a $3,340 account that also holds $1,700 cash). Do not advise a TRIM for
 "over-concentration" unless the weight is high against the full account value.
+NEVER add "buying power" or any margin/purchasing-power figure to the account
+value to compute net worth or a concentration denominator — buying power is a
+leveraged purchasing limit, not money you own. The "Total value" figure is the
+sole denominator; it already includes cash and equivalents.
 
 Respond in this exact format:
 

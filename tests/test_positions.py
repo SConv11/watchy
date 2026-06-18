@@ -464,6 +464,21 @@ class TestRendering:
         assert "25.0%" in text
         assert "Buying power" not in text  # omitted when None
 
+    def test_render_portfolio_never_shows_buying_power(self):
+        # #22: buying power is a leveraged purchasing limit, not net worth. The
+        # advisor must never see it, or it adds it to Total value and fabricates an
+        # inflated concentration denominator (a 32% position rendered as 7.7%).
+        # Weight must be computed against Total value alone.
+        summary = AccountSummary(
+            account_id="X1", total_value=4590.72, buying_power=14421.64,
+            positions=[Position(ticker="AMZN", quantity=6, average_cost=240.0,
+                                market_value=1476.0)],
+        )
+        text = render_portfolio(summary)
+        assert "Buying power" not in text
+        assert "14,421" not in text
+        assert "32.2%" in text  # 1476 / 4590.72, NOT 1476 / 19012.36 (7.8%)
+
     def test_format_age_days_and_hours(self):
         now = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
         assert _format_age(now - timedelta(days=3, hours=4), now) == "3d 4h old"
