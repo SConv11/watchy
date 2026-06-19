@@ -83,6 +83,7 @@ metadata:
 - **省的钱几乎全在 flash 侧**:`risk0` 砍掉 **Conservative + Neutral** 两个风险分析师(各 ~$0.002)+ 缩 RM/PM 上下文。**注意 Aggressive 在 risk0 仍保留**——"无风险辩论"是砍 2 个不是 3 个。
 - **pro 占比反升(地板效应):** AMZN 周日 pro 30% → 工作日 34%。flash 随分析师减少而降,**pro(RM+PM)是固定地板**(2 调用不变)→ 越省 pro 占比越高,印证"降 RM 到 flash"是最大结构杠杆。
 - **盘中 2 分析师重扫 `[market+social]|risk0` ≈ 半价**($0.015–0.018/次,全量的一半)。一票一天可被重扫多次(6/15:KLAC×4、LRCX×3、AMAT×2)→ **工作日真实账单里易忽略的累加项**。
+  - **已上盖子(#23,commit f906a5c,2026-06-19):** Tier 1 每票每 UTC 日重扫次数上限 `max_tier1_pipelines_per_day`(全局+按票覆盖,config.yaml 出厂 **2**)。每次信号触发原本只受**每信号冷却**约束,所以一票一天触发多种信号会叠加多次付费 pipeline+advisor;cap 数 launched runs(run_history tier1,UTC 日切),超限仍 log_signal+推送 `Signal Fired (rescan capped)` 但跳过 pipeline。**持仓票不特殊豁免**(避免 Tier1 耦合持仓源),要全覆盖就按票设高/删 key。Tier 2 定时不受影响。这是用户选的降本杠杆(否决了再收紧门控,因刚做完 6/16 ATR×3 校准)。
 - ⚠️ **异常值:** `6/15 14:09 EMR [market+social]=$0.0292`(其它重扫的 ~2 倍),根因单个 **Market Analyst in=193,073 tok / 单节点 $0.0141** 一次失控大输入回灌;偶发——根因+修法见 issue #20。
 
 ### TradingAgents 调优 → 暂不修,记 issue #20(2026-06-16)
