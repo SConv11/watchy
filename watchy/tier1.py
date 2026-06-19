@@ -101,6 +101,21 @@ def _handle_signal(
     details = _bundle_summary(bundle)
     store.log_signal(ticker, sig, details)
 
+    # Tier 1 daily rescan cap (#23): each signal trip launches a paid pipeline +
+    # advisor, guarded only by per-signal cooldown, so a ticker tripping several
+    # distinct signals in a day stacks several paid rescans. Cap the count per UTC
+    # day; further trips are logged + notified but skip the LLM pipeline.
+    cap = _rescan_cap(ticker, config)
+    if cap is not None:
+        runs_today = store.count_tier1_runs_today(ticker)
+        if runs_today >= cap:
+            logger.info(
+                "Tier 1 rescan capped for %s (%s): %d/%d runs today, skipping pipeline",
+                ticker, sig, runs_today, cap,
+            )
+            notifier.rescan_capped(ticker, sig, details, runs_today, cap)
+            return
+
     # notify: signal fired
     notifier.signal_fired(
         ticker, sig, details,
@@ -178,3 +193,11 @@ def _bundle_summary(bundle: IndicatorBundle) -> dict[str, Any]:
 def _analyst_list_from_spec(spec: PipelineSpec) -> list[str]:
     from watchy.orchestrator import _analyst_names
     return _analyst_names(spec.analysts)
+
+
+def _rescan_cap(ticker: str, config: WatchyConfig) -> int | None:
+    """Effective Tier 1 daily rescan cap: per-ticker override else global (#23)."""
+    tc = config.get_ticker_config(ticker)
+    if tc is not None and tc.max_tier1_pipelines_per_day is not None:
+        return tc.max_tier1_pipelines_per_day
+    return config.max_tier1_pipelines_per_day

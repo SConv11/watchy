@@ -143,6 +143,27 @@ class TelegramNotifier:
 
         return self.send("\n".join(lines))
 
+    def rescan_capped(
+        self,
+        ticker: str,
+        signal_type: str,
+        indicators: dict[str, Any],
+        runs_today: int,
+        cap: int,
+    ) -> bool:
+        """Notify that a signal fired but the paid Tier 1 rescan was skipped (daily cap)."""
+        label = _signal_label(signal_type)
+        price = indicators.get("current_price", "N/A")
+        return self.send(
+            "\n".join([
+                f"<b>Signal Fired (rescan capped)</b> — ${ticker}",
+                f"<b>Signal:</b> {label}",
+                f"<b>Price:</b> ${price}",
+                f"<b>Skipped:</b> {runs_today}/{cap} Tier 1 rescans already run today — "
+                f"no LLM pipeline launched to save cost.",
+            ])
+        )
+
     def pipeline_result(
         self,
         ticker: str,

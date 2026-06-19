@@ -193,6 +193,25 @@ class StateStore:
             self._conn.commit()
             return cur.lastrowid
 
+    def count_tier1_runs_today(self, ticker: str) -> int:
+        """Count Tier 1 pipeline runs launched for a ticker since UTC midnight.
+
+        Used by the Tier 1 daily rescan cap (#23). Counts every launched run
+        (start_run row) regardless of success, since each consumed LLM budget.
+        """
+        midnight = (
+            datetime.now(timezone.utc)
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .isoformat()
+        )
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM run_history "
+                "WHERE ticker = ? AND tier = 'tier1' AND started_ts >= ?",
+                (ticker.upper(), midnight),
+            ).fetchone()
+        return row[0] if row else 0
+
     def complete_run(self, run_id: int, success: bool, summary: str = "") -> None:
         with self._lock:
             self._conn.execute(

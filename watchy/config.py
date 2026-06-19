@@ -34,6 +34,12 @@ class TickerConfig:
     # Falls back to the fixed pct when ATR data is unavailable. Overrides the
     # global mult for this ticker.
     atr_proximity_mult: float | None = None
+    # Optional per-ticker override of the Tier 1 intraday rescan cap. When set
+    # (or inherited from WatchyConfig.max_tier1_pipelines_per_day), at most this
+    # many Tier 1 LLM pipelines run for this ticker per UTC day; further signal
+    # trips are logged + notified but skip the paid pipeline/advisor. None = no
+    # cap. Overrides the global default for this ticker.
+    max_tier1_pipelines_per_day: int | None = None
 
 
 @dataclass
@@ -106,6 +112,13 @@ class WatchyConfig:
     # reading can't make the band absurd. Only used when an ATR mult is active.
     proximity_pct_floor: float = 4.0
     proximity_pct_ceiling: float = 20.0
+    # Global cap on Tier 1 intraday LLM rescans per ticker per UTC day, applied to
+    # every ticker that doesn't set its own max_tier1_pipelines_per_day. Each Tier 1
+    # signal trip launches a paid [market+social] pipeline + advisor (guarded only by
+    # per-signal cooldown), so a busy ticker tripping several distinct signals stacks
+    # several paid rescans in a day. This caps that. None disables the cap globally.
+    # Tier 2 scheduled runs are never affected.
+    max_tier1_pipelines_per_day: int | None = None
 
     def get_ticker_config(self, ticker: str) -> TickerConfig | None:
         """Return the TickerConfig for a symbol (case-insensitive), or None."""
@@ -143,6 +156,7 @@ class WatchyConfig:
             atr_proximity_mult=raw.get("atr_proximity_mult"),
             proximity_pct_floor=raw.get("proximity_pct_floor", 4.0),
             proximity_pct_ceiling=raw.get("proximity_pct_ceiling", 20.0),
+            max_tier1_pipelines_per_day=raw.get("max_tier1_pipelines_per_day"),
         )
 
 

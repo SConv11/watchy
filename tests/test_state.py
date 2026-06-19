@@ -171,3 +171,30 @@ class TestRunHistory:
         id1 = store.start_run("A", "tier1")
         id2 = store.start_run("B", "tier2")
         assert id2 > id1
+
+
+class TestTier1RunCount:
+    """count_tier1_runs_today backs the Tier 1 daily rescan cap (#23)."""
+
+    def test_counts_only_tier1_for_ticker(self, store):
+        store.start_run("NVDA", "tier1", "rsi_oversold")
+        store.start_run("NVDA", "tier1", "atr_spike")
+        store.start_run("NVDA", "tier2", "scheduled_daily")  # tier2 excluded
+        store.start_run("AAPL", "tier1", "rsi_oversold")     # other ticker excluded
+        assert store.count_tier1_runs_today("NVDA") == 2
+        assert store.count_tier1_runs_today("AAPL") == 1
+        assert store.count_tier1_runs_today("TSLA") == 0
+
+    def test_case_insensitive(self, store):
+        store.start_run("nvda", "tier1")
+        assert store.count_tier1_runs_today("NVDA") == 1
+
+    def test_excludes_earlier_utc_days(self, store):
+        # A run stamped yesterday must not count toward today's cap.
+        store._conn.execute(
+            "INSERT INTO run_history (ticker, tier, trigger_type, started_ts) "
+            "VALUES ('NVDA', 'tier1', 'rsi_oversold', '2000-01-01T12:00:00+00:00')"
+        )
+        store._conn.commit()
+        store.start_run("NVDA", "tier1")  # today
+        assert store.count_tier1_runs_today("NVDA") == 1

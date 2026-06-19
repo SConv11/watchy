@@ -51,3 +51,52 @@ class TestScanAlwaysRuns:
             out = scan_ticker("AAPL", config, store, notifier)
         assert out == []
         store.get_ticker_state.assert_not_called()  # no data → nothing to scan
+
+
+class TestRescanCap:
+    """Tier 1 daily rescan cap (#23) — limits paid pipelines per ticker per UTC day."""
+
+    def _fire(self, config, runs_today):
+        """Drive a single signal trip; return (store, notifier)."""
+        store, notifier = MagicMock(), MagicMock()
+        store.get_ticker_state.return_value = {}
+        store.is_in_cooldown.return_value = False
+        store.start_run.return_value = 1
+        store.count_tier1_runs_today.return_value = runs_today
+        with patch("watchy.tier1.compute_indicators", return_value=_bundle(210.0)), \
+             patch("watchy.tier1.detect_signals", return_value=["rsi_oversold"]), \
+             patch("watchy.tier1.run_pipeline", return_value={"summary": "ok"}) as run, \
+             patch("watchy.tier1.get_advice", return_value={}), \
+             patch("watchy.tier1.get_position_source"), \
+             patch("watchy.tier1.monitor_schwab"):
+            scan_ticker("AAPL", config, store, notifier)
+        return store, notifier, run
+
+    def test_capped_skips_pipeline(self):
+        config = _config(max_tier1_pipelines_per_day=2)
+        store, notifier, run = self._fire(config, runs_today=2)
+        run.assert_not_called()                    # no paid pipeline
+        notifier.rescan_capped.assert_called_once()
+        notifier.signal_fired.assert_not_called()
+        store.log_signal.assert_called_once()      # breach still recorded (cooldown intact)
+
+    def test_under_cap_runs_pipeline(self):
+        config = _config(max_tier1_pipelines_per_day=2)
+        store, notifier, run = self._fire(config, runs_today=1)
+        run.assert_called_once()
+        notifier.rescan_capped.assert_not_called()
+        notifier.signal_fired.assert_called_once()
+
+    def test_no_cap_when_unset(self):
+        config = _config()  # global None, no per-ticker → never capped
+        config.max_tier1_pipelines_per_day = None
+        store, notifier, run = self._fire(config, runs_today=99)
+        run.assert_called_once()
+        notifier.rescan_capped.assert_not_called()
+
+    def test_per_ticker_override_beats_global(self):
+        config = _config(max_tier1_pipelines_per_day=5)
+        config.max_tier1_pipelines_per_day = 1  # global=1, per-ticker=5 → per-ticker wins
+        store, notifier, run = self._fire(config, runs_today=3)
+        run.assert_called_once()                   # 3 < 5, still runs
+        notifier.rescan_capped.assert_not_called()

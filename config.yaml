@@ -71,6 +71,16 @@ atr_proximity_mult: 3.0
 # proximity_pct_floor: 4.0
 # proximity_pct_ceiling: 20.0
 
+# Tier 1 intraday rescan cap (#23). Each Tier 1 signal trip launches a paid
+# [market+social] pipeline + advisor, guarded only by per-signal cooldown — so a
+# busy ticker tripping several distinct signals stacks several paid rescans in a
+# day (observed: KLAC x4, LRCX x3). Cap the number of Tier 1 LLM pipelines per
+# ticker per UTC day; further trips are logged + notified (Signal Fired (rescan
+# capped)) but skip the pipeline. A per-ticker max_tier1_pipelines_per_day in the
+# long-form watchlist overrides this. Remove this line to disable the cap.
+# Tier 2 scheduled runs are never affected.
+max_tier1_pipelines_per_day: 2
+
 # Thresholds & cooldowns below are OPTIONAL — defaults are in code.
 # Uncomment any section to override.
 
