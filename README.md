@@ -1,178 +1,226 @@
-# Watchy（看门狗）
+# Watchy
 
-> 🌐 English version: [README.en.md](README.en.md)
+> 🌐 Chinese version: [README.zh.md](README.zh.md)
 
+A stock-monitoring daemon built on the [TradingAgents](https://github.com/anthropics/TradingAgents)
+multi-agent LLM trading framework. Watchy watches your watchlist for you — an
+hourly zero-cost technical indicator scan, a daily full-depth analysis, and
+position-aware advice pushed to Telegram.
 
-基于 [TradingAgents](https://github.com/anthropics/TradingAgents) 多智能体 LLM 交易框架的股票监控守护进程（daemon）。Watchy 帮你盯着自选股（watchlist）——每小时跑一次零成本的 технический指标扫描（indicator scan），每天跑一次全深度分析（full-depth analysis），并通过 Telegram 推送持仓感知的交易建议（position-aware advice）。
-
-## 架构（Architecture）
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                  Watchy 守护进程                   │
+│                  Watchy daemon                    │
 │                                                   │
-│  第一层 Tier 1（每小时）      第二层 Tier 2（每天）   │
-│  ──────────────────────      ──────────────────  │
-│  OHLCV + 技术指标             完整四分析师流水线      │
-│  不调用 LLM                   (pipeline)           │
-│       │                       + 辩论 (debate)      │
-│       │                       + 风险管理 (risk)    │
-│       ▼                            │              │
-│  触发信号？                        │              │
-│  (signal breach?)                 │              │
-│       │                            │              │
-│    ┌──┴──┐                         │              │
-│    │ 是  │───→ 分级分析 ────────────┘              │
-│    │     │    (graduated subset)                  │
-│    │ 否  │───→ 更新状态,                           │
-│    └─────┘    退出（零成本）                        │
+│  Tier 1 (hourly)            Tier 2 (daily)        │
+│  ──────────────────────     ──────────────────    │
+│  OHLCV + indicators         full 4-analyst        │
+│  no LLM                     pipeline              │
+│       │                     + debate              │
+│       │                     + risk management     │
+│       ▼                          │                │
+│  signal breach?                  │                │
+│       │                          │                │
+│    ┌──┴──┐                       │                │
+│    │ yes │───→ graduated ────────┘                │
+│    │     │     subset                             │
+│    │ no  │───→ update state,                      │
+│    └─────┘     exit (zero cost)                   │
 │                                                   │
-│  每次分析完成后：                                   │
-│    持仓数据源 → LLM 顾问 → Telegram 推送           │
+│  after every analysis:                            │
+│    position source → LLM advisor → Telegram       │
 └─────────────────────────────────────────────────┘
 ```
 
-**Tier 1（第一层）**按可配间隔（默认每小时）逐票扫描，**仅在美股常规交易时段运行**（休市、周末、节假日自动跳过——靠 `exchange_calendars` 判断，含夏令时/DST 修正）。通过 yfinance 获取 OHLCV 数据并计算技术指标（technical indicators），不调用任何 LLM。检测 10 种信号类型，包括金叉/死叉（golden/death cross，含完整均线阶梯确认 full MA staircase）、RSI 极值、MACD 交叉、布林带突破（Bollinger breach）、成交量异动（volume anomaly）和 ATR 飙升。信号触发时，根据信号重要程度启动分级（graduated）的 TradingAgents 分析师子集。
+**Tier 1** scans each ticker at a configurable interval (hourly by default) and
+**runs only during US regular trading hours** — market closures, weekends, and
+holidays are skipped automatically via `exchange_calendars` (DST-correct). It
+fetches OHLCV through yfinance and computes technical indicators with no LLM
+calls. It detects 11 signal types: golden/death cross (with the full moving-
+average staircase confirmation), RSI extremes, MACD crossovers, Bollinger band
+breaches, volume anomalies, and ATR spikes. When a signal fires, it launches a
+graduated subset of TradingAgents analysts sized to the signal's significance.
 
-**Tier 2（第二层）**在配置的 UTC 时间运行（**周一–五 + 周日**，周六跳过，因与周日运行冗余）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
+**Tier 2** runs at a configured UTC time (**Mon–Fri + Sun**; Saturday is skipped
+as redundant with Sunday). For every watchlist ticker it launches the full
+four-analyst pipeline (Market + Sentiment + News + Fundamentals) with a Bull/Bear
+debate. Risk-management depth is day-of-week dependent: **simplified on weekdays,
+escalated to the full 3-way risk debate on Sundays.**
 
-**Tier 2 价格邻近门控（price-proximity gate，#15）**：用顶层 `min_price_proximity_pct` 设一个**全局默认**百分比（自动套到所有 watch-only 票；也可在长表里按票用同名键 `min_price_proximity_pct` 覆盖），**工作日**若现价离 **入场目标价（entry target）** 超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）。门控只针对 **watch-only（非持仓）** 的票：**只要当前持有该票（position source 查到非零持仓），Tier 2 永远运行**——有资金敞口就值得每天分析，与价格无关（持仓查询出错时也按"持有"处理，宁可多跑）。**周日永远运行**（每周一次完整更新，含新闻）。入场目标价优先用手动 `target_price`，否则用 **自动推导值（#16）**：每次 Tier 2 运行时从顾问输出的结构化 `Target:` 字段提取（语义明确为"建仓/加仓的入场价"，不是止损也不是止盈）并存入 `state.db`（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
+**Tier 2 price-proximity gate (#15):** set a **global default** percent via the
+top-level `min_price_proximity_pct` (applied to every watch-only ticker; a
+per-ticker `min_price_proximity_pct` overrides it). **On weekdays**, the expensive
+LLM pipeline is skipped when the current price is farther than that percent from
+the **entry target** (saving DeepSeek cost). The gate is **watch-only**: **a
+ticker you currently hold (the position source reports a non-zero position) is
+always analysed**, regardless of price — capital at risk is worth the daily
+tokens (a position-lookup error is treated as "held" too, erring toward running).
+**Sunday always runs** (a weekly full update incl. news). The entry target uses a
+manual `target_price` first, otherwise an **auto-derived value (#16)**: each Tier
+2 run extracts it from the advisor's structured `Target:` field — semantically an
+**entry / accumulation level only** (not a stop-loss, not a take-profit) — and
+stores it in `state.db` (a manual value always wins). Note **Tier 1 is never
+gated** — it's the always-on 30-minute radar that covers far-from-target names
+between gated Tier 2 runs.
 
-**ATR 自适应带宽（#15 后续，可选）**：不用固定百分比，设 `atr_proximity_mult`（全局或按票），门控带宽变成 `mult × ATR%`（`ATR% = avg_atr_20d / price × 100`），即"现价离目标超过 `mult` 个交易日的常规波动才跳过"——波动大的票带宽更宽、安静的票更窄。带宽钳到 `[proximity_pct_floor, proximity_pct_ceiling]`（默认 4–20%），ATR 数据缺失时回退固定百分比。启用前先用 `scripts/calibrate_atr_proximity.py` 校准 mult。
+**ATR-adaptive band (#15 follow-up, optional):** instead of a fixed percent, set
+`atr_proximity_mult` (global, or per-ticker) to make the band `mult × ATR%`
+(ATR% = `avg_atr_20d / price × 100`) — i.e. *skip when price is more than `mult`
+typical trading days of movement from target*. Volatile names get a wider band,
+calm names a narrower one. The band is clamped to `[proximity_pct_floor,
+proximity_pct_ceiling]` (default 4–20%) and falls back to the fixed percent when
+ATR data is unavailable. Calibrate the multiple against your watchlist with
+`scripts/calibrate_atr_proximity.py` before enabling.
 
-**Tier 2 批次顺序（#21）**：每日批次**先跑持仓票**（有资金敞口），再跑 watch-only 中**离目标最近**的，无目标价的票排最后——这样长批次被打断（auto-update 重启、崩溃、token 过期）时，最重要的票已经分析过。指标每票预取一次（throttled）并被流水线复用，不重复抓取。
+**Tier 2 batch order (#21):** the daily batch runs **held tickers first** (capital
+at risk), then watch-only **nearest-to-target first**, then no-target names last —
+so if a long batch is interrupted (auto-update restart, crash, token expiry), the
+most important names were analysed first. Indicators are pre-fetched once per
+ticker (throttled) and reused by the pipeline (no double fetch).
 
-**每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将分析报告与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。
+**After every analysis**, Watchy fetches the ticker's current position, calls a
+lightweight LLM (Gemini by default) to synthesize the analysis report + position
+into actionable advice, and pushes a natural-language summary to Telegram.
 
-**持仓数据源（position source，#4）是分层的，保证 Schwab 无法刷新时仍可用**：
+**The position source (#4) is layered, so it keeps working when Schwab can't
+refresh:**
 
-1. **Schwab API（实时）** —— 主数据源。每次成功获取后，快照（snapshot）会缓存到 `~/watchy_config/positions_cache.json`。
-2. **缓存快照（cached snapshot）** —— 当实时获取失败（token 过期需 7 天重新授权、API 故障、网络中断）时，回退到上次成功的快照，并在推送中标注数据时效（如 `Schwab cache, ... (3d 4h old)`），绝不把陈旧数据当成实时。
-3. **手动文件（manual file）** —— 最终兜底：`~/watchy_config/positions.yaml`（schema 见 `positions.example.yaml`）。用于 Schwab 首次授权前的引导，或彻底无可用数据时。手动文件的持仓会用 yfinance 实时价格补全市值与浮动盈亏（unrealized P&L），**同样标注时效**——优先读文件里可选的 `as_of:` 字段（你声明的持仓截至日期），否则退回文件修改时间（mtime）。
+1. **Schwab API (live)** — the primary source. Each successful fetch is snapshotted
+   to `~/watchy_config/positions_cache.json`.
+2. **Cached snapshot** — when a live fetch fails (a token needing 7-day re-auth, an
+   API error, a network outage), it falls back to the last good snapshot and labels
+   the data's age in the push (e.g. `Schwab cache, ... (3d 4h old)`), never passing
+   stale data off as live.
+3. **Manual file** — the final fallback: `~/watchy_config/positions.yaml` (schema in
+   `positions.example.yaml`). For bootstrapping before Schwab's first auth, or when
+   no other data is available. Manual holdings are enriched with live yfinance prices
+   for market value and unrealized P&L, **also age-labelled** — preferring the file's
+   optional `as_of:` field (the date you state your holdings are current as of),
+   otherwise the file's mtime.
 
-> Schwab 实时层通过 **`schwabdev`** 包实现（只读：持仓 + 余额）。首次需在运行守护进程的机器上做一次浏览器 OAuth（schwabdev 打印授权 URL，授权后把回调 URL 粘回终端），token 存到 `tokens_path`（schwabdev 3.x 的 SQLite 库，默认 `~/watchy_config/schwab_tokens.db`）；refresh token 有效期 7 天，到期需重新授权——任何实时获取失败都会自动回退到缓存快照、再到手动文件，守护进程不中断。配置见 `secrets.example.yaml` 的 `schwab:` 段。
+> The Schwab live layer uses **`schwabdev`** (read-only: positions + balances). The
+> first run needs a one-time browser OAuth on the host machine (schwabdev prints an
+> authorization URL; paste the callback URL back into the terminal); tokens are stored
+> at `tokens_path` (a schwabdev 3.x SQLite db, default `~/watchy_config/schwab_tokens.db`). The refresh token
+> lasts 7 days; on expiry, re-auth — any live-fetch failure falls back to the cache
+> then the manual file, so the daemon never stops. See the `schwab:` section of
+> `secrets.example.yaml`.
 >
-> **持仓在每个 Tier 2 批次开头抓取一次，并在该批所有 ticker 间共享**（整批一致的持仓视图 + 一次 API 调用，而非每个 ticker 各抓一次）。Tier 1 在信号触发时抓取，且在跑分析 pipeline 之前。
+> **Positions are fetched once per Tier 2 batch and shared across all tickers** (one
+> consistent holdings view + one API call, instead of one call per ticker). Tier 1
+> fetches on a fired signal, before running the pipeline.
 >
-> **Token 过期提醒（不再静默用陈旧数据）：** 每个 Tier 2 批次(以及每次 Tier 1 触发扫描)会检查它刚解析出的持仓快照——若 refresh token **已失效**（扫描回退到缓存/手动数据，需重新授权）或**即将过期**就推送 Telegram 提醒。过期提醒**分两档逐级升级**：剩余 **≤2 天**先发一次，剩余 **≤1 天**再发一次更紧急的（同一档不重复，按授权周期去重；重新授权后重置）。这些提醒用**醒目的 emoji 边框 + 大写标题**（🔴/🟠/🚨），刻意区别于普通的持仓建议，避免被淹没。不额外发请求,直接复用扫描已做的那次抓取；重新授权提示按天去重（每天最多一条）。7 天计时由 `scripts/schwab_oauth.py` 在授权成功时打点。
->
-> **每周重新授权：** 在 VPS 上跑 `python scripts/schwab_oauth.py --force`。`--force` 会把现有 token 库挪到 `.bak` 后强制走完整浏览器 OAuth（签发新的 7 天 refresh token 并重置计时）——**不加 `--force` 的普通重跑只会刷新 access token，不会重置 7 天计时，也不会触发新授权**。授权成功后自动删除 `.bak`；失败则恢复 `.bak`，绝不丢掉仍可用的旧 token。（7 天到期是 Schwab 个人开发者账号的硬限制，无法绕过；浏览器登录步骤无法自动化。）
+> **Token-expiry alerts (no more silent staleness):** each Tier 2 batch (and each
+> Tier 1 fired-signal scan) inspects the position snapshot it just resolved and pushes
+> a Telegram alert when the refresh token has **already lapsed** (re-auth needed — the
+> scan is on cached/manual data) or is **expiring soon** (within ~1 day of the 7-day
+> limit). No extra API call — it reads the fetch the scan already did. Alerts are
+> deduped to at most one re-auth nag per day. The 7-day clock is stamped by
+> `scripts/schwab_oauth.py` on a successful auth, so re-auth via that script keeps the
+> warnings accurate.
 
-## 快速开始（Quick Start）
+## Quick Start
 
 ```bash
-# 1. 克隆仓库
+# 1. Clone
 cd ~
 git clone https://github.com/SConv11/watchy.git
 
-# 2. 安装依赖
+# 2. Install (editable, so git pull takes effect without reinstalling)
 ~/.pyenv/versions/3.11.9/envs/trading/bin/pip install -e ~/watchy
-# -e 表示可编辑安装（editable install），后续 git pull 自动生效
 
-# 3. 创建配置文件
+# 3. Create config files
 mkdir -p ~/watchy_config
 cp ~/watchy/config.yaml ~/watchy_config/config.yaml
 cp ~/watchy/secrets.example.yaml ~/watchy_config/secrets.yaml
 
-# 4. 填入敏感信息（API key、Telegram token）
+# 4. Fill in secrets (API keys, Telegram token)
 nano ~/watchy_config/secrets.yaml
 
-# 5. 编辑自选股（可通过 GitHub 远程编辑，git pull 同步）
+# 5. Edit the watchlist (can be done remotely on GitHub, synced via git pull)
 nano ~/watchy_config/config.yaml
 
-# 6. 启动（测试用）
+# 6. Run (for testing)
 WATCHY_CONFIG=~/watchy_config/config.yaml python -m watchy.daemon
 ```
 
-### systemd 生产部署（Production）
+### Production (systemd)
 
 ```bash
 sudo cp ~/watchy/watchy.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now watchy
-journalctl -u watchy -f  # 查看日志
+journalctl -u watchy -f  # follow logs
 ```
 
-**自动更新（Auto-update）** —— `watchy-update.timer` 每 5 分钟从 GitHub 拉取，有新提交时
-`git pull --ff-only` 并重启 daemon：
+## Configuration
 
-```bash
-# 必需：允许 watchy 用户重启服务（auto-update.sh 以 watchy 身份运行，重启系统单元需 root）
-echo 'watchy ALL=(root) NOPASSWD: /usr/bin/systemctl restart watchy' \
-  | sudo tee /etc/sudoers.d/watchy-autoupdate
-sudo chmod 0440 /etc/sudoers.d/watchy-autoupdate && sudo visudo -c
+Config is split across two files:
 
-sudo cp ~/watchy/watchy-update.service ~/watchy/watchy-update.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now watchy-update.timer
-```
+- **`config.yaml`** (safe to commit) — watchlist, thresholds, cooldowns
+- **`secrets.yaml`** (git-ignored) — LLM API keys, Telegram token, Schwab credentials
 
-> ⚠️ 上面的 sudoers drop-in 是**必需的**。`auto-update.sh` 以 `User=watchy` 运行，而
-> `systemctl restart watchy` 需要 root —— 缺了它，`git pull` 会成功但重启**静默失败**，
-> daemon 会一直跑旧代码（2026-06-14 踩过这个坑）。
-> 副作用：每次 push 都会触发重启，**勿在 Tier-2 窗口（~11:30–13:00 UTC）push**，否则打断批次。
+See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key settings:
 
-## 配置（Configuration）
+| Setting | Purpose |
+|---------|---------|
+| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 weekday gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on Sunday or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
+| `min_price_proximity_pct` | **Global default** percent for the Tier 2 proximity gate (#15), applied to every watch-only (non-held) ticker; on weekdays skip the daily LLM when price is farther than this from the entry target. Held tickers and Sunday always run; Tier 1 is unaffected. Override per-ticker with the same key. Remove to disable globally. |
+| `atr_proximity_mult` | Optional ATR-adaptive band (#15 follow-up), global or per-ticker. When set (and ATR data is available), the gate band is `mult × ATR%` (`ATR% = avg_atr_20d / price × 100`) instead of the fixed percent — wider for volatile names, narrower for calm ones. Clamped to `[proximity_pct_floor, proximity_pct_ceiling]` (default 4–20%); falls back to `min_price_proximity_pct` without ATR data. Calibrate with `scripts/calibrate_atr_proximity.py`. |
+| `signal_thresholds` | Detection thresholds for RSI, volume, ATR, etc. |
+| `cooldown` | Per-signal cooldown window to suppress repeat pushes |
+| `tier2_throttle_s` | Seconds to sleep between tickers in a Tier 2 daily scan (default 2.0), to smooth yfinance requests and avoid rate limits |
+| `llm` | Advisor LLM config — supports Gemini, DeepSeek, OpenAI, Anthropic |
+| `telegram` | Telegram bot token and chat ID |
+| `schwab` | Schwab brokerage credentials (primary position source; auto-falls back to cache/manual file when unconfigured) |
+| `positions.yaml` | Manual positions file (final fallback, in `~/watchy_config/`, not committed); schema in `positions.example.yaml`. **Set `total_account_value:`** (the full account figure from your broker — equities + cash + equivalents — used directly as the concentration denominator; or use `cash:` to have Watchy add the buffer to live stock value) so the advisor judges concentration against **Total Account Value**, not the stock-only total, avoiding false "over-concentration" TRIM advice |
 
-配置分两个文件：
+> **Data fetching & caching:** market data is fetched via `yfinance` with a
+> `yfinance-cache` disk layer on top (smart caching — only the missing/stale bars
+> are pulled), cutting redundant Yahoo requests. The cache layer is an optional
+> dependency — it falls back to plain `yfinance` when absent, and degrades
+> gracefully on non-rate-limit cache errors without disrupting the scan.
 
-- **`config.yaml`**（可安全提交）—— 自选股、阈值、冷却时间
-- **`secrets.yaml`**（git-ignored）—— LLM API key、Telegram token、Schwab 凭证
+## Signals Detected
 
-详见 `config.yaml` 和 `secrets.example.yaml` 中的完整注释。主要配置项：
+| Signal | Logic | Default cooldown |
+|--------|-------|------------------|
+| Golden Cross | 50MA crosses above 200MA + full staircase (price > 50 > 150 > 200) + 200MA rising | 7 days |
+| Death Cross | 50MA crosses below 200MA | 7 days |
+| RSI Oversold | RSI drops below 30 | 12 hours |
+| RSI Overbought | RSI rises above 70 | 12 hours |
+| MACD Bullish Cross | MACD line crosses above the signal line | 24 hours |
+| MACD Bearish Cross | MACD line crosses below the signal line | 24 hours |
+| Bollinger Upper Breach | Price ≥ upper band (2σ) | 6 hours |
+| Bollinger Lower Breach | Price ≤ lower band (2σ) | 6 hours |
+| Volume Anomaly (≥2x) | Volume ≥ 2× the 20-day average | 4 hours |
+| Moderate Volume (≥1.5x) | Volume ≥ 1.5× the 20-day average (notify only, no analysis) | 4 hours |
+| ATR Spike | ATR ≥ 1.5× the 20-day average ATR | 6 hours |
 
-| 配置项 | 用途 |
-|--------|------|
-| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间、可选的 `target_price`，以及按票覆盖的 `min_price_proximity_pct`（Tier 2 工作日门控，#15，默认取顶层全局值；目标价缺省时用 #16 自动推导值，持仓票与周日永不门控）以及按票覆盖的 `max_tier1_pipelines_per_day`（Tier 1 盘中重扫上限，#23）。Tier 1 不做邻近门控，交易时段内始终扫描 |
-| `min_price_proximity_pct` | Tier 2 邻近门控（#15）的**全局默认**百分比，套到所有 watch-only（非持仓）票；工作日现价离入场目标价超过该值就跳过当日 LLM。持仓票与周日永不门控，Tier 1 不受影响。可按票用同名键覆盖；删除/留空即全局关闭 |
-| `atr_proximity_mult` | 可选的 ATR 自适应带宽（#15 后续），全局或按票。设了且有 ATR 数据时，门控带宽 = `mult × ATR%`（`ATR% = avg_atr_20d / price × 100`），替代固定百分比——波动大的票更宽、安静的更窄。钳到 `[proximity_pct_floor, proximity_pct_ceiling]`（默认 4–20%）；无 ATR 数据时回退 `min_price_proximity_pct`。用 `scripts/calibrate_atr_proximity.py` 校准 |
-| `max_tier1_pipelines_per_day` | Tier 1 盘中重扫上限（#23），全局或按票。每次 Tier 1 信号触发都会跑一条付费 `[market+social]` pipeline + 顾问（仅受每信号冷却约束），所以一只票一天触发多种信号会叠加多次付费重扫（实测 KLAC×4、LRCX×3）。该值上限每票每 UTC 日的 Tier 1 LLM pipeline 次数；超限的触发仍记录+推送（`Signal Fired (rescan capped)`）但跳过 pipeline。按票用同名键覆盖；删除/留空即全局关闭。Tier 2 定时跑不受影响 |
-| `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
-| `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
-| `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |
-| `llm` | 顾问 LLM 配置——支持 Gemini、DeepSeek、OpenAI、Anthropic |
-| `telegram` | Telegram 机器人令牌（bot token）和聊天 ID |
-| `schwab` | Schwab 券商凭证（持仓数据主源；未配置时自动回退到缓存/手动文件） |
-| `positions.yaml` | 手动持仓文件（最终兜底，放 `~/watchy_config/`，不提交）；schema 见 `positions.example.yaml`。**建议填 `total_account_value:`**（账户总值 = 股票 + 现金 + 现金等价物，直接从券商读到的那个数，作为权威分母；或退而填 `cash:` 让 Watchy 自己加）——让顾问按 **总账户价值** 而非仅股票市值判断集中度，避免把正常持仓误判为「过度集中」而错误建议 TRIM |
+> **Trigger semantics:** both crossover signals (golden/death, MACD, RSI) and
+> level signals (Bollinger, volume, ATR) **fire on entry** — once, at the moment
+> the condition goes from unmet to met. They stay silent while the condition
+> persists, and only re-arm once it clears and crosses again. The cooldown is an
+> additional dedup window layered on top of the trigger.
 
-> **数据获取与缓存**：行情通过 `yfinance` 获取，并叠加 `yfinance-cache` 磁盘缓存层
-> （智能缓存，仅拉取缺失/过期的 bar），减少对 Yahoo 的重复请求。缓存层为可选依赖——
-> 未安装时自动退回纯 `yfinance`；缓存出现非限流错误时也会优雅降级，不影响扫描。
+## Graduated Analyst Response
 
-## 信号检测（Signals Detected）
+Not every signal warrants a full four-analyst debate. Watchy scales the call to
+the signal's significance:
 
-| 信号 | 检测逻辑 | 默认冷却 |
-|------|----------|----------|
-| 金叉 Golden Cross | 50MA 上穿 200MA + 完整阶梯 (price > 50 > 150 > 200) + 200MA 上行 | 7 天 |
-| 死叉 Death Cross | 50MA 下穿 200MA | 7 天 |
-| RSI 超卖 Oversold | RSI 跌破 30 | 12 小时 |
-| RSI 超买 Overbought | RSI 升破 70 | 12 小时 |
-| MACD 金叉 Bullish Cross | MACD 线上穿信号线（signal line） | 24 小时 |
-| MACD 死叉 Bearish Cross | MACD 线下穿信号线 | 24 小时 |
-| 布林上轨突破 Upper Breach | 价格 ≥ 上轨 (2σ) | 6 小时 |
-| 布林下轨突破 Lower Breach | 价格 ≤ 下轨 (2σ) | 6 小时 |
-| 成交量异动 Volume Anomaly (≥2x) | 成交量 ≥ 20日均量的 2 倍 | 4 小时 |
-| ATR 飙升 ATR Spike | ATR ≥ 20日均 ATR 的 1.5 倍 | 6 小时 |
+| Trigger | Analysts | Debate | Risk |
+|---------|----------|--------|------|
+| Tier 2 daily (Mon–Fri) | Market + Sentiment + News + Fundamentals | Bull/Bear | Simplified |
+| Tier 2 Sunday | Market + Sentiment + News + Fundamentals | Bull/Bear | Full 3-way |
+| Tier 2 Saturday | — (skipped, redundant with Sunday) | — | — |
+| Golden / Death Cross | Market + Sentiment + News | Bull/Bear | Full 3-way |
+| RSI, MACD, Bollinger, strong volume, ATR | Market + Sentiment | Bull/Bear | Simplified |
+| Moderate volume (≥1.5x) | Market only | None | None |
 
-> **触发语义**：交叉类（金叉/死叉、MACD、RSI）和水平类（布林、成交量、ATR）信号都是
-> **进入态触发（fire on entry）**——只在「从未满足到满足」的那一刻触发一次，条件持续
-> 存在期间保持静默，待条件解除并再次穿越才会重新触发。冷却时间是触发之上的额外去重窗口。
+## Telegram Message Examples
 
-## 分级分析师响应（Graduated Analyst Response）
-
-并非所有信号都需要完整的四分析师辩论。Watchy 根据信号重要程度分级调用：
-
-| 触发条件 Trigger | 分析师 Analysts | 辩论 Debate | 风险管理 Risk |
-|------------------|----------------|-------------|---------------|
-| Tier 2 每日运行（周一–五） | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 简化 Simplified |
-| Tier 2 周日运行 | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 完整三维 Full 3-way |
-| Tier 2 周六 | —（跳过，与周日运行冗余） | — | — |
-| 金叉/死叉 | 市场 + 情绪 + 新闻 | 多空 | 完整三维 |
-| RSI、MACD、布林、强放量 (≥2x)、ATR | 市场 + 情绪 | 多空 | 简化 Simplified |
-
-## Telegram 消息示例
-
-**信号触发时：**
+**On a signal firing:**
 ```
 Signal Fired — $NVDA
 Signal: Golden Cross (50MA ↑ 200MA)
@@ -180,7 +228,7 @@ Price: $142.37  RSI: 58.3  SEPA Stage: Advancing
 Analysts launching: market, sentiment, news
 ```
 
-**分析完成 + 持仓建议（Schwab 启用后）：**
+**On analysis complete:**
 ```
 Analysis Complete — $NVDA
 Trigger: Golden Cross (50MA ↑ 200MA)
@@ -195,9 +243,11 @@ Rating: Overweight. Initiate half-size at ~$246, hard stop $229.50,
 targets $274/$300/$317. (shown in full)
 ```
 
-> 分析完成的消息只保留两块**已消化**的内容——交易员计划（Trader Plan）与组合经理的
-> 最终判定（Risk / Final Call），**完整不截断**（超长由分块发送）。各分析师的原始报告
-> 不再塞进消息正文，而是作为完整的 `.md` 报告附件发送。持仓 + 顾问建议在**另一条**消息里：
+> The analysis-complete message keeps only the two **digested** blocks — the
+> Trader Plan and the Portfolio Manager's Risk / Final Call — **in full, never
+> truncated** (chunked across messages if long). The raw per-analyst reports are
+> no longer crammed into the message body; they're sent as the complete `.md`
+> report attachment. The position + advisor advice ride in a **separate** message:
 
 ```
 Your Position:
@@ -212,40 +262,43 @@ Suggested size: 10-15 shares (~2% of portfolio)
 Key risk: If price breaks below the 50MA, the signal is invalidated.
 ```
 
-## 文件结构（File Structure）
+## File Structure
 
 ```
 watchy/
-├── config.yaml              # 非敏感配置（可安全提交，通过 GitHub 编辑）
-├── secrets.example.yaml     # 敏感配置模板（本地拷贝后填入真实 key）
-├── requirements.txt         # Python 依赖
-├── watchy.service           # systemd 单元文件
-├── project_doc.md           # 完整技术文档（英文）
-└── watchy/                  # 包
-    ├── __init__.py           # 包标记
-    ├── config.py             # YAML 配置 → 类型化数据类 (dataclass)
-    ├── state.py              # SQLite 状态存储 (交叉记忆、冷却、历史)
-    ├── indicators.py         # 技术指标计算 (yfinance + pandas, 无 LLM)
-    ├── orchestrator.py       # 按信号类型的分级流水线选择
-    ├── pipeline_runner.py    # TradingAgents 桥接: PipelineSpec → TradingAgentsGraph
-    ├── token_tracker.py      # DeepSeek 组件级 token/成本追踪 (TOKENCOST 日志行)
-    ├── advisor.py            # LLM 合成: 分析报告 + 持仓 → 交易建议
-    ├── positions.py          # 分层持仓源: Schwab → 缓存快照 → 手动文件
-    ├── schwab.py             # Schwab 券商 API 客户端 (实时层, schwabdev)
-    ├── notify.py             # Telegram 机器人通知
-    ├── tier1.py              # 每小时信号扫描
-    ├── tier2.py              # 每日完整流水线
-    └── daemon.py             # APScheduler 入口
+├── config.yaml              # non-sensitive config (safe to commit, edit via GitHub)
+├── secrets.example.yaml     # sensitive-config template (copy locally, fill in keys)
+├── requirements.txt         # Python dependencies
+├── watchy.service           # systemd unit file
+├── project_doc.md           # full technical documentation
+└── watchy/                  # package
+    ├── __init__.py           # package marker
+    ├── config.py             # YAML config → typed dataclasses
+    ├── state.py              # SQLite state store (crossover memory, cooldown, history)
+    ├── indicators.py         # technical-indicator computation (yfinance + pandas, no LLM)
+    ├── proximity.py          # shared price-proximity gate (Tier 1 & Tier 2)
+    ├── orchestrator.py       # graduated pipeline selection per signal type
+    ├── advisor.py            # LLM synthesis: analysis report + position → advice
+    ├── positions.py          # layered position source: Schwab → cached snapshot → manual file
+    ├── schwab.py             # Schwab brokerage API client (live layer, schwabdev)
+    ├── notify.py             # Telegram bot notifications
+    ├── tier1.py              # hourly signal scan
+    ├── tier2.py              # daily full pipeline
+    └── daemon.py             # APScheduler entry point
 ```
 
-## 对接 TradingAgents（Wiring）
+## Wiring TradingAgents
 
-`orchestrator.py` 中的 `pipeline_runner` 参数是对接点：一个可调用对象 `(ticker, PipelineSpec) -> dict`。生产实现是 `pipeline_runner.py` 的 `create_tradingagents_runner(...)`，它把 `PipelineSpec` 映射成 `TradingAgentsGraph` 调用（按信号类型选择分析师子集、辩论轮数、风险深度），运行流水线、保存 markdown 报告，并通过 `token_tracker.py` 打出组件级 `TOKENCOST` 成本日志行。
+The `pipeline_runner` argument in `orchestrator.py` is the integration point. Pass
+a callable `(ticker, PipelineSpec) -> dict` that invokes the appropriate
+TradingAgents analyst subset. A stub is provided by default (logs only, no real
+call); `watchy/pipeline_runner.py` is the real bridge.
 
-## 文档（Documentation）
+## Documentation
 
-完整技术文档见 [`project_doc.md`](project_doc.md) —— 涵盖模块内部实现、数据流、部署、测试策略和配置参考。
+See [`project_doc.md`](project_doc.md) for full technical documentation — module
+internals, data flow, deployment, testing strategy, and a config reference.
 
-## 许可证（License）
+## License
 
 MIT
