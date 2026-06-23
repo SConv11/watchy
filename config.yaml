@@ -20,7 +20,6 @@ watchlist:
   - "VST"
   - "AAPL"
   - "ETN" 
-  - "MOD"
   - "VRT"
   - "APH"
   - "HUBB"
@@ -29,6 +28,8 @@ watchlist:
   - "RMBS"
   - "LUMN"
 
+
+  # - "MOD"
   # - "TSLA"
   # - "SOXX"
   # - "SMCI"
