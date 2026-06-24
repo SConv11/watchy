@@ -22,10 +22,11 @@ Backlog #1–#18 essentially done; system deployed on the VPS and validated. Det
   self-bootstraps off `derived_target_price`. Held tickers & Sunday never gated; Tier 1 never gated.
 - **Schwab live + token-expiry alerts (#4)** → memory `watchy-issue-plan`. Re-auth every ≤7 days on the
   VPS: `scripts/schwab_oauth.py --force` (must use `--force` to reset the 7-day clock).
-- **VPS downsize decision** (decide before the **2026-07-02** renewal) → memory `watchy-vps-migration`.
-  Leaning keep 4 GB or ~2 GB (1 GB marginal: steady-state resident ~460–500 MB + planned Docker/CouchDB
-  stack). Includes the from-old-VPS capture checklist.
-- **SSH airport-port workaround (sshd on 8022)** → memory `ssh-airport-port-block`.
+- **VPS migration DONE (2026-06-24)** → memory `watchy-vps-migration`. Now single-machine on Bandwagon LA
+  `qcvps` (2 GB, Ubuntu 24.04); old Hetzner box deleted. Steady-state resident ~460–510 MB (doesn't drop
+  after a batch — CPython arena retention); watch swap when the planned Docker/CouchDB stack lands.
+- **SSH airport-port workaround (sshd on 8022)** → memory `ssh-airport-port-block`. (New box uses plain
+  port 22; Cloudflare Tunnel SSH still a TODO.)
 
 ⚠️ The auto-update timer restarts the daemon on every push — **don't push during the Tier-2 window
 (~11:30–13:00 UTC)** or you interrupt the batch.
