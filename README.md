@@ -1,5 +1,9 @@
 # Watchy
 
+[![tests](https://github.com/SConv11/watchy/actions/workflows/ci.yml/badge.svg)](https://github.com/SConv11/watchy/actions/workflows/ci.yml)
+![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+
 > 🌐 Chinese version: [README.zh.md](README.zh.md)
 
 A stock-monitoring daemon built on the [TradingAgents](https://github.com/anthropics/TradingAgents)

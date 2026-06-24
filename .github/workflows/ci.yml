@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the production runtime (pyenv trading env); 3.12/3.13 guard forward-compat.
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install dependencies
+        # TradingAgents is installed separately in production and is NOT required
+        # here: pipeline_runner defers its import, and the suite mocks the boundary.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest
+      - name: Run tests
+        # test_e2e.py is a manual smoke needing real API keys — excluded from CI.
+        run: pytest tests/ --ignore=tests/test_e2e.py -q
