@@ -184,30 +184,22 @@ class TelegramNotifier:
         esc = self._escape_html
         verdict = result.get("verdict", "")
         analyst_count = result.get("analyst_count")
-        trader_plan = (result.get("trader_plan") or "").strip()
-        risk = (result.get("risk_assessment") or "").strip()
 
         lines = [
             f"<b>Analysis Complete</b> — ${ticker}",
             f"<b>Trigger:</b> {_signal_label(signal_type)}",
         ]
         # Headline verdict line (#3): one-word BUY/SELL/HOLD + how many analysts ran.
+        # The Trader Plan + Risk/Final Call blocks are intentionally NOT inlined —
+        # they (and the raw analyst reports) live in the attached .md. The message
+        # is a one-glance headline; open the report for the detail.
         if verdict:
             icon = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}.get(verdict, "")
             suffix = f" ({analyst_count} analysts)" if analyst_count else ""
             lines.append(f"<b>Verdict:</b> {icon} <b>{esc(verdict)}</b>{suffix}")
-
-        # The two digested blocks, in full: the Trader's plan and the Portfolio
-        # Manager's final call. Raw analyst reports are intentionally omitted —
-        # they're in the attached .md. No per-field truncation: long blocks are
-        # chunked across messages by _split_message.
-        if trader_plan:
-            lines += ["", "<b>📋 Trader Plan</b>", esc(trader_plan)]
-        if risk:
-            lines += ["", "<b>⚖️ Risk / Final Call</b>", esc(risk)]
-        # Sparse pipelines (e.g. market-only Tier 1) may produce neither; fall
-        # back to the summary so the message isn't just a bare verdict.
-        if not trader_plan and not risk:
+        else:
+            # Sparse pipelines (e.g. market-only Tier 1) may have no verdict; fall
+            # back to the summary so the message isn't a bare header.
             summary = (result.get("summary") or "").strip()
             if summary:
                 lines += ["", "<b>Summary</b>", esc(summary)]

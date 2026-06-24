@@ -237,21 +237,14 @@ Analysts launching: market, sentiment, news
 Analysis Complete — $NVDA
 Trigger: Golden Cross (50MA ↑ 200MA)
 Verdict: 🟢 BUY (4 analysts)
-
-📋 Trader Plan
-Action: Buy. Disciplined accumulation on pullbacks; AWS/AI thesis
-intact, near-term momentum mixed. (shown in full)
-
-⚖️ Risk / Final Call
-Rating: Overweight. Initiate half-size at ~$246, hard stop $229.50,
-targets $274/$300/$317. (shown in full)
 ```
 
-> The analysis-complete message keeps only the two **digested** blocks — the
-> Trader Plan and the Portfolio Manager's Risk / Final Call — **in full, never
-> truncated** (chunked across messages if long). The raw per-analyst reports are
-> no longer crammed into the message body; they're sent as the complete `.md`
-> report attachment. The position + advisor advice ride in a **separate** message:
+> The analysis-complete message is a one-glance headline — just the verdict
+> (BUY/SELL/HOLD + how many analysts ran). The Trader Plan, the Portfolio
+> Manager's Risk / Final Call, and the raw per-analyst reports are **not** inlined;
+> they all live in the complete `.md` report sent as an attachment. (Sparse
+> pipelines with no verdict fall back to a short summary line.) The position +
+> advisor advice ride in a **separate** message, kept in full:
 
 ```
 Your Position:
