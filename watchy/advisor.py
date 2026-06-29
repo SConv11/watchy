@@ -53,7 +53,10 @@ N/A if the analysis gives no actionable entry level.>
 
 Then write a detailed paragraph (5-8 sentences) covering:
   - Specific entry/exit price target or range, referencing levels from the analysis
-  - Suggested position size with rationale (e.g. "3% of portfolio / $5,000")
+  - Suggested position size with rationale (e.g. "3% of portfolio / $5,000").
+    Fractional shares are available, but only fall back to them when a single
+    whole share is too large for the suggested allocation (i.e. one share costs
+    more than the dollar amount you'd allocate); otherwise size in whole shares.
   - The 2-3 key reasons from the analysis that support this decision
   - The primary risk(s) that could invalidate this recommendation
   - Any conditions the user should watch for (e.g. "if it breaks below X, exit")
