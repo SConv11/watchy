@@ -92,10 +92,20 @@ metadata:
 - **B. Market Analyst 降上下文(成本):** 指标恒用 5y 缓存算(`stockstats_utils.load_ohlcv:64`)→ look_back/价格窗都是**显示窗,砍它不坏 200_sma**。做 A(夹 get_stock_data≤120d,封死 EMR 193k 爆炸)+ B(get_indicators look_back 30→14),hold D(指标 8→5 动分析广度),C 可选(去周末 N/A 行)。
 - ⚠️ 部署:只改本机笔记本没用(daemon 在 VPS 跑),且 upstream pull 会覆盖未追踪改动;VPS 上线避开 Tier-2 窗口(~11:30–13:00 UTC)。
 
+## ⚠️ DeepSeek 高峰时段价格翻倍（2026-06-29 用户告知，新政策）
+- **高峰窗（北京时间 UTC+8，无夏令时）：每日 09:00–12:00 和 14:00–18:00，该时段单价 ×2。**
+- 换算到 UTC（账单/调度都按 UTC，见下时区节）：**01:00–04:00 UTC 和 06:00–10:00 UTC**。
+- **对 Watchy 影响 ≈ 0**——所有 DeepSeek 调用天然落在峰外：
+  - Tier 2 定时批：`11:30 UTC` 起跑（~11:30–13:00 UTC 窗 = 北京 19:30–21:00）→ 峰外（18:00 之后）。
+  - Tier 1 盘中重扫：绑美东盘时 ~13:30–20:00 UTC（夏）/14:30–21:00 UTC（冬）→ 都在 06:00–10:00 UTC 峰窗之后，峰外。
+- **唯一护栏：别把 `tier2_time_utc`（全局默认 11:30，或按票覆盖）挪进 01:00–04:00 / 06:00–10:00 UTC。**
+  config.yaml:43 的示例 `"14:30"` 安全（14:30 UTC=峰外）；但形如 `08:00`/`02:00` 会正中峰窗、该票成本翻倍。
+- （Gemini advisor 是另一家 provider，与 DeepSeek 时段定价无关。）
+
 ## DeepSeek V4 已无 off-peak 折扣
 - off-peak 折扣窗（16:30–00:30 UTC，V3 五折 / R1 2.5 折）**只覆盖旧的 V3/R1**。
 - **V4-Pro 把降价做成永久价**，替代了时段折扣；官方 pricing 页对 V4 无任何时段折扣字样。
-- 结论：**不要再为省钱把 Tier 2 挪进 off-peak**，对 V4 无效。
+- 结论：**不要再为省钱把 Tier 2 挪进 off-peak**，对 V4 无效（但见上：现在有"避开高峰加价"的反向理由——别让调度漂进峰窗）。
 - V4 官方价（per 1M tokens）：
   - V4-Flash：input cache-miss $0.14 / cache-hit $0.0028 / output $0.28
   - V4-Pro：input cache-miss $0.435 / cache-hit $0.003625 / output $0.87
