@@ -21,10 +21,10 @@ class TickerConfig:
     target_price: float | None = None
     # Optional per-ticker override of the Tier 2 price-proximity gate (#15). When
     # set (or inherited from the global WatchyConfig.min_price_proximity_pct), the
-    # daily LLM pipeline is skipped on *weekdays* if the current price is farther
-    # than this percent from the effective target (manual target_price, else the
-    # #16 auto-derived one). Sunday and held tickers always run. A value here
-    # overrides the global default for this ticker.
+    # daily LLM pipeline is skipped if the current price is farther than this
+    # percent from the effective target (manual target_price, else the #16
+    # auto-derived one). The weekly full-risk run (first trading day of the week)
+    # and held tickers always run. A value here overrides the global default.
     min_price_proximity_pct: float | None = None
     # Optional per-ticker ATR-adaptive proximity band (#15 follow-up). When set
     # (or inherited from WatchyConfig.atr_proximity_mult), the gate band becomes
@@ -100,7 +100,8 @@ class WatchyConfig:
     tier2_throttle_s: float = 2.0
     # Global default for the Tier 2 price-proximity gate (#15), applied to every
     # watch-only ticker that doesn't set its own min_price_proximity_pct. None
-    # disables the gate globally. Held tickers and Sunday are never gated.
+    # disables the gate globally. Held tickers and the weekly full-risk run
+    # (first trading day of the week) are never gated.
     min_price_proximity_pct: float | None = None
     # Global ATR-adaptive proximity band (#15 follow-up), applied to every
     # watch-only ticker that doesn't set its own atr_proximity_mult. When set

@@ -23,6 +23,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from watchy import __version__
 from watchy.config import WatchyConfig, load_config
+from watchy.market_calendar import get_calendar as get_market_calendar
+from watchy.market_calendar import is_trading_day
 from watchy.locks import TickerLockRegistry
 from watchy.notify import TelegramNotifier
 from watchy.state import StateStore
@@ -116,8 +118,6 @@ def build_scheduler(
 # weekday fallback; the exchange-calendar path handles DST + holidays correctly.
 _MARKET_OPEN_UTC = dtime(13, 30)
 _MARKET_CLOSE_UTC = dtime(20, 0)
-_market_calendar = None
-_market_calendar_failed = False
 
 
 def _regular_session_window(now: datetime) -> bool:
@@ -130,29 +130,6 @@ def _regular_session_window(now: datetime) -> bool:
     return _MARKET_OPEN_UTC <= now.timetz().replace(tzinfo=None) <= _MARKET_CLOSE_UTC
 
 
-def _get_market_calendar():
-    """Lazily load the XNYS exchange calendar, or None if it can't be loaded.
-
-    Shared by the Tier 1 market-hours guard and the Tier 2 trading-day guard so
-    both degrade to their weekday fallbacks together.
-    """
-    global _market_calendar, _market_calendar_failed
-    if _market_calendar_failed:
-        return None
-    if _market_calendar is None:
-        try:
-            import exchange_calendars as xcals
-            _market_calendar = xcals.get_calendar("XNYS")
-        except Exception:
-            logging.getLogger("watchy.daemon").warning(
-                "exchange_calendars unavailable; using weekday fallbacks",
-                exc_info=True,
-            )
-            _market_calendar_failed = True
-            return None
-    return _market_calendar
-
-
 def _is_market_open(now: datetime | None = None) -> bool:
     """True if the US equity market (XNYS) is in its regular session.
 
@@ -161,7 +138,7 @@ def _is_market_open(now: datetime | None = None) -> bool:
     calendar can't be loaded.
     """
     now = now or datetime.now(timezone.utc)
-    cal = _get_market_calendar()
+    cal = get_market_calendar()
     if cal is not None:
         try:
             import pandas as pd
@@ -202,28 +179,15 @@ def _tier1_job(
 
 
 def _is_tier2_day(now: datetime | None = None) -> bool:
-    """Tier 2 runs on US trading days plus Sunday; it skips weekends and holidays.
+    """Tier 2 runs only on US trading days; weekends and NYSE holidays are skipped.
 
-    Sunday always runs (weekly 3-way risk debate + more complete weekend news).
-    Saturday and weekday market holidays (e.g. July 3) are skipped: the market is
-    closed, the run would only re-chew the prior close, and nothing is tradable
-    that day — redundant cost. Falls back to a weekday check (Saturday-only skip,
-    holiday-blind) if the exchange calendar can't be loaded.
+    The weekly full 3-way risk debate rides on the **first trading day of each
+    week** (see market_calendar.is_weekly_full_risk_day), not a separate weekend
+    run — a weekend batch analysed the stale Friday close and was re-chewed by
+    Monday's simplified run on the same close (redundant cost). Falls back to a
+    Mon–Fri check (holiday-blind) if the exchange calendar can't be loaded.
     """
-    now = now or datetime.now(timezone.utc)
-    if now.weekday() == 6:  # Sunday — always (risk debate)
-        return True
-    cal = _get_market_calendar()
-    if cal is not None:
-        try:
-            import pandas as pd
-            return bool(cal.is_session(pd.Timestamp(now.date())))
-        except Exception:
-            logging.getLogger("watchy.daemon").warning(
-                "exchange_calendars session check failed; weekday fallback",
-                exc_info=True,
-            )
-    return now.weekday() != 5  # fallback: Saturday-only skip (holiday-blind)
+    return is_trading_day(now)
 
 
 def _tier2_job(
@@ -235,7 +199,7 @@ def _tier2_job(
 ) -> None:
     logger = logging.getLogger("watchy.daemon")
     if not _is_tier2_day():
-        logger.debug("Tier 2 skipped — market closed (weekend/holiday, non-Sunday)")
+        logger.debug("Tier 2 skipped — market closed (weekend/holiday)")
         return
     try:
         run_daily_scan(

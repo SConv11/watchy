@@ -79,24 +79,34 @@ class TestGetPipeline:
 
 
 class TestScheduledSpec:
-    """Tier 2 cadence: daily 4-analyst + Sunday-only 3-way risk debate (#14)."""
+    """Tier 2 cadence: daily 4-analyst + weekly (first-trading-day) 3-way risk (#14)."""
 
-    def test_sunday_is_full_risk(self):
-        sunday = datetime(2026, 6, 7, 12, 0, tzinfo=timezone.utc)  # a Sunday
-        assert sunday.weekday() == 6
-        spec = get_scheduled_spec(sunday)
+    def test_first_trading_day_of_week_is_full_risk(self):
+        # 2026-06-01 is a Monday and the first trading day of its week.
+        monday = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+        assert monday.weekday() == 0
+        spec = get_scheduled_spec(monday)
         assert spec.analysts == AnalystSet.FULL
         assert spec.debate == DebateMode.BULL_BEAR
         assert spec.risk == RiskMode.FULL
 
-    def test_weekday_is_simplified_risk(self):
-        for d in range(1, 6):  # Mon(2026-06-01) .. Fri(2026-06-05)
+    def test_midweek_is_simplified_risk(self):
+        for d in range(2, 6):  # Tue(2026-06-02) .. Fri(2026-06-05)
             day = datetime(2026, 6, d, 12, 0, tzinfo=timezone.utc)
-            assert day.weekday() != 6
+            assert day.weekday() not in (0, 6)
             spec = get_scheduled_spec(day)
             assert spec.analysts == AnalystSet.FULL
             assert spec.debate == DebateMode.BULL_BEAR
             assert spec.risk == RiskMode.SIMPLIFIED
+
+    def test_full_risk_shifts_to_tuesday_when_monday_is_a_holiday(self):
+        """Memorial Day 2026 (Mon 2026-05-25) is a NYSE holiday, so the weekly
+        full-risk run shifts to Tuesday — the guarantee survives holiday Mondays."""
+        pytest.importorskip("exchange_calendars")
+        monday_holiday = datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc)
+        tuesday = datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc)
+        assert get_scheduled_spec(monday_holiday).risk == RiskMode.SIMPLIFIED
+        assert get_scheduled_spec(tuesday).risk == RiskMode.FULL
 
     def test_analysts_always_full(self):
         """Fundamentals must be in the daily set (the gap #14 flagged)."""

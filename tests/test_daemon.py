@@ -79,12 +79,14 @@ class TestTier1JobGuard:
 
 class TestTier2DayGuard:
     # 2026-06-06 is a Saturday; 2026-06-07 Sunday; 2026-06-01..05 Mon–Fri
-    # (all ordinary trading days).
+    # (all ordinary trading days). Tier 2 now runs only on trading days.
     def test_saturday_is_not_a_tier2_day(self):
         assert _is_tier2_day(_utc(2026, 6, 6, 11, 30)) is False
 
-    def test_sunday_is_a_tier2_day(self):
-        assert _is_tier2_day(_utc(2026, 6, 7, 11, 30)) is True
+    def test_sunday_is_not_a_tier2_day(self):
+        """Weekend runs were dropped — the weekly full-risk run rides the first
+        trading day of the week instead (see market_calendar)."""
+        assert _is_tier2_day(_utc(2026, 6, 7, 11, 30)) is False
 
     def test_weekdays_are_tier2_days(self):
         for d in range(1, 6):  # Mon–Fri
@@ -96,18 +98,13 @@ class TestTier2DayGuard:
         pytest.importorskip("exchange_calendars")
         assert _is_tier2_day(_utc(2026, 7, 3, 11, 30)) is False
 
-    def test_sunday_runs_even_though_market_closed(self):
-        """Sunday is never a trading session but must still run (risk debate)."""
-        pytest.importorskip("exchange_calendars")
-        assert _is_tier2_day(_utc(2026, 6, 7, 11, 30)) is True
-
-    def test_job_skips_on_saturday(self):
+    def test_job_skips_when_not_a_tier2_day(self):
         with patch("watchy.daemon._is_tier2_day", return_value=False), \
              patch("watchy.daemon.run_daily_scan") as mock_scan:
             _tier2_job(MagicMock(), MagicMock(), MagicMock())
         mock_scan.assert_not_called()
 
-    def test_job_runs_on_non_saturday(self):
+    def test_job_runs_on_a_tier2_day(self):
         with patch("watchy.daemon._is_tier2_day", return_value=True), \
              patch("watchy.daemon.run_daily_scan") as mock_scan:
             _tier2_job(MagicMock(), MagicMock(), MagicMock())

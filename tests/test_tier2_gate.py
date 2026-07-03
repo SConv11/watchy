@@ -16,9 +16,12 @@ from watchy.tier2 import (
     _should_skip_tier2,
 )
 
-# 2026-06-08 is a Monday (weekday 0); 2026-06-07 is a Sunday (weekday 6).
-MONDAY = datetime(2026, 6, 8, tzinfo=timezone.utc)
-SUNDAY = datetime(2026, 6, 7, tzinfo=timezone.utc)
+# 2026-06-08 is a Monday — the first trading day of its week, i.e. the weekly
+# full-risk run that is never gated. 2026-06-09 is a Tuesday — an ordinary
+# trading day where the proximity gate applies. (Both agree under the
+# calendar-less fallback: Monday == weekday 0, Tuesday != 0.)
+WEEKLY_FULL_DAY = datetime(2026, 6, 8, tzinfo=timezone.utc)
+GATED_DAY = datetime(2026, 6, 9, tzinfo=timezone.utc)
 
 
 class TestIsOutsideProximity:
@@ -62,60 +65,61 @@ class TestShouldSkipTier2:
 
     def test_weekday_far_not_held_skips(self):
         tc = self._tc(target_price=180.0)
-        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=False) is True
+        assert _should_skip_tier2(210.0, tc, {}, GATED_DAY, held=False) is True
 
     def test_held_never_skips(self):
         # even far + weekday + opted-in: a position we HOLD always runs
         tc = self._tc(target_price=180.0)
-        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=True) is False
+        assert _should_skip_tier2(210.0, tc, {}, GATED_DAY, held=True) is False
 
     def test_weekday_near_runs(self):
         tc = self._tc(target_price=180.0)
-        assert _should_skip_tier2(184.0, tc, {}, MONDAY, held=False) is False
+        assert _should_skip_tier2(184.0, tc, {}, GATED_DAY, held=False) is False
 
-    def test_sunday_never_skips(self):
+    def test_weekly_full_day_never_skips(self):
+        # first trading day of the week (weekly full-risk run) → never gated
         tc = self._tc(target_price=180.0)
-        assert _should_skip_tier2(210.0, tc, {}, SUNDAY, held=False) is False
+        assert _should_skip_tier2(210.0, tc, {}, WEEKLY_FULL_DAY, held=False) is False
 
     def test_no_pct_never_skips(self):
         tc = TickerConfig(ticker="AAPL", target_price=180.0)
-        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=False) is False
+        assert _should_skip_tier2(210.0, tc, {}, GATED_DAY, held=False) is False
 
     def test_no_target_never_skips(self):
         # pct configured but neither manual nor derived target → can't gate
-        assert _should_skip_tier2(210.0, self._tc(), {}, MONDAY, held=False) is False
+        assert _should_skip_tier2(210.0, self._tc(), {}, GATED_DAY, held=False) is False
 
     def test_uses_derived_target(self):
-        # no manual target; a derived target far from price → skip on a weekday
+        # no manual target; a derived target far from price → skip on a gated day
         assert _should_skip_tier2(
-            210.0, self._tc(), {"derived_target_price": 180.0}, MONDAY, held=False
+            210.0, self._tc(), {"derived_target_price": 180.0}, GATED_DAY, held=False
         ) is True
 
     def test_no_ticker_config(self):
-        assert _should_skip_tier2(210.0, None, {}, MONDAY, held=False) is False
+        assert _should_skip_tier2(210.0, None, {}, GATED_DAY, held=False) is False
 
     def test_global_default_applies_without_per_ticker(self):
-        # no per-ticker pct, but a global default → gate applies on a weekday
+        # no per-ticker pct, but a global default → gate applies on a gated day
         tc = TickerConfig(ticker="AAPL", target_price=180.0)
         cfg = WatchyConfig(min_price_proximity_pct=5.0)
-        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=False, config=cfg) is True
+        assert _should_skip_tier2(210.0, tc, {}, GATED_DAY, held=False, config=cfg) is True
 
     def test_per_ticker_overrides_global(self):
         # per-ticker 50% is lenient: 210 vs 180 (16.7%) is inside → runs, even
         # though the global 5% would have skipped it
         tc = TickerConfig(ticker="AAPL", target_price=180.0, min_price_proximity_pct=50.0)
         cfg = WatchyConfig(min_price_proximity_pct=5.0)
-        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=False, config=cfg) is False
+        assert _should_skip_tier2(210.0, tc, {}, GATED_DAY, held=False, config=cfg) is False
 
     def test_held_ignores_global_default(self):
         tc = TickerConfig(ticker="AAPL", target_price=180.0)
         cfg = WatchyConfig(min_price_proximity_pct=5.0)
-        assert _should_skip_tier2(210.0, tc, {}, MONDAY, held=True, config=cfg) is False
+        assert _should_skip_tier2(210.0, tc, {}, GATED_DAY, held=True, config=cfg) is False
 
-    def test_sunday_ignores_global_default(self):
+    def test_weekly_full_day_ignores_global_default(self):
         tc = TickerConfig(ticker="AAPL", target_price=180.0)
         cfg = WatchyConfig(min_price_proximity_pct=5.0)
-        assert _should_skip_tier2(210.0, tc, {}, SUNDAY, held=False, config=cfg) is False
+        assert _should_skip_tier2(210.0, tc, {}, WEEKLY_FULL_DAY, held=False, config=cfg) is False
 
     def test_atr_adaptive_gate_skips_when_outside_band(self):
         # ATR mult mode: avg_atr=3 on price 210 → ATR%≈1.43; mult 5 → band≈7.14%.
@@ -123,7 +127,7 @@ class TestShouldSkipTier2:
         tc = TickerConfig(ticker="AAPL", target_price=180.0)
         cfg = WatchyConfig(atr_proximity_mult=5.0)
         assert _should_skip_tier2(
-            210.0, tc, {}, MONDAY, held=False, config=cfg, avg_atr=3.0
+            210.0, tc, {}, GATED_DAY, held=False, config=cfg, avg_atr=3.0
         ) is True
 
     def test_atr_adaptive_falls_back_to_fixed_without_atr(self):
@@ -132,7 +136,7 @@ class TestShouldSkipTier2:
         cfg = WatchyConfig(atr_proximity_mult=5.0, min_price_proximity_pct=50.0)
         # fixed 50% band: 16.7% away is inside → runs.
         assert _should_skip_tier2(
-            210.0, tc, {}, MONDAY, held=False, config=cfg, avg_atr=None
+            210.0, tc, {}, GATED_DAY, held=False, config=cfg, avg_atr=None
         ) is False
 
 

@@ -38,9 +38,9 @@
 
 **Tier 1（第一层）**按可配间隔（默认每小时）逐票扫描，**仅在美股常规交易时段运行**（休市、周末、节假日自动跳过——靠 `exchange_calendars` 判断，含夏令时/DST 修正）。通过 yfinance 获取 OHLCV 数据并计算技术指标（technical indicators），不调用任何 LLM。检测 10 种信号类型，包括金叉/死叉（golden/death cross，含完整均线阶梯确认 full MA staircase）、RSI 极值、MACD 交叉、布林带突破（Bollinger breach）、成交量异动（volume anomaly）和 ATR 飙升。信号触发时，根据信号重要程度启动分级（graduated）的 TradingAgents 分析师子集。
 
-**Tier 2（第二层）**在配置的 UTC 时间运行（**美股交易日 + 周日**；周末与 NYSE 节假日（如 7/3）跳过——当日休市、只会重复分析前一日收盘、且无法交易，属冗余成本；**周日仍跑**，做每周风险辩论 + 周末新闻）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
+**Tier 2（第二层）**在配置的 UTC 时间运行（**仅美股交易日**；周末与 NYSE 节假日（如 7/3）跳过——当日休市、只会重复分析前一日收盘、且无法交易，属冗余成本）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**普通交易日为简化（simplified），每周第一个交易日升级为完整三维风险辩论（3-way risk debate）**（通常是周一；周一逢节假日则顺延到周二，保证每票每周仍有一次完整风控，且不必为一份"分析周五陈旧收盘"的周末批次额外付费）。
 
-**Tier 2 价格邻近门控（price-proximity gate，#15）**：用顶层 `min_price_proximity_pct` 设一个**全局默认**百分比（自动套到所有 watch-only 票；也可在长表里按票用同名键 `min_price_proximity_pct` 覆盖），**工作日**若现价离 **入场目标价（entry target）** 超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）。门控只针对 **watch-only（非持仓）** 的票：**只要当前持有该票（position source 查到非零持仓），Tier 2 永远运行**——有资金敞口就值得每天分析，与价格无关（持仓查询出错时也按"持有"处理，宁可多跑）。**周日永远运行**（每周一次完整更新，含新闻）。入场目标价优先用手动 `target_price`，否则用 **自动推导值（#16）**：每次 Tier 2 运行时从顾问输出的结构化 `Target:` 字段提取（语义明确为"建仓/加仓的入场价"，不是止损也不是止盈）并存入 `state.db`（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
+**Tier 2 价格邻近门控（price-proximity gate，#15）**：用顶层 `min_price_proximity_pct` 设一个**全局默认**百分比（自动套到所有 watch-only 票；也可在长表里按票用同名键 `min_price_proximity_pct` 覆盖），**普通交易日**若现价离 **入场目标价（entry target）** 超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）。门控只针对 **watch-only（非持仓）** 的票：**只要当前持有该票（position source 查到非零持仓），Tier 2 永远运行**——有资金敞口就值得每天分析，与价格无关（持仓查询出错时也按"持有"处理，宁可多跑）。**每周完整风控日（每周第一个交易日）永远运行**每一只票（每周一次完整更新，含新闻）。入场目标价优先用手动 `target_price`，否则用 **自动推导值（#16）**：每次 Tier 2 运行时从顾问输出的结构化 `Target:` 字段提取（语义明确为"建仓/加仓的入场价"，不是止损也不是止盈）并存入 `state.db`（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
 
 **ATR 自适应带宽（#15 后续，可选）**：不用固定百分比，设 `atr_proximity_mult`（全局或按票），门控带宽变成 `mult × ATR%`（`ATR% = avg_atr_20d / price × 100`），即"现价离目标超过 `mult` 个交易日的常规波动才跳过"——波动大的票带宽更宽、安静的票更窄。带宽钳到 `[proximity_pct_floor, proximity_pct_ceiling]`（默认 4–20%），ATR 数据缺失时回退固定百分比。启用前先用 `scripts/calibrate_atr_proximity.py` 校准 mult。
 
@@ -127,8 +127,8 @@ sudo systemctl enable --now watchy-update.timer
 
 | 配置项 | 用途 |
 |--------|------|
-| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间、可选的 `target_price`，以及按票覆盖的 `min_price_proximity_pct`（Tier 2 工作日门控，#15，默认取顶层全局值；目标价缺省时用 #16 自动推导值，持仓票与周日永不门控）以及按票覆盖的 `max_tier1_pipelines_per_day`（Tier 1 盘中重扫上限，#23）。Tier 1 不做邻近门控，交易时段内始终扫描 |
-| `min_price_proximity_pct` | Tier 2 邻近门控（#15）的**全局默认**百分比，套到所有 watch-only（非持仓）票；工作日现价离入场目标价超过该值就跳过当日 LLM。持仓票与周日永不门控，Tier 1 不受影响。可按票用同名键覆盖；删除/留空即全局关闭 |
+| `watchlist` | 监控的股票列表（自选股），可按票设置 Tier 1 间隔、Tier 2 UTC 时间、可选的 `target_price`，以及按票覆盖的 `min_price_proximity_pct`（Tier 2 邻近门控，#15，默认取顶层全局值；目标价缺省时用 #16 自动推导值，持仓票与每周完整风控日永不门控）以及按票覆盖的 `max_tier1_pipelines_per_day`（Tier 1 盘中重扫上限，#23）。Tier 1 不做邻近门控，交易时段内始终扫描 |
+| `min_price_proximity_pct` | Tier 2 邻近门控（#15）的**全局默认**百分比，套到所有 watch-only（非持仓）票；普通交易日现价离入场目标价超过该值就跳过当日 LLM。持仓票与每周完整风控日（每周第一个交易日）永不门控，Tier 1 不受影响。可按票用同名键覆盖；删除/留空即全局关闭 |
 | `atr_proximity_mult` | 可选的 ATR 自适应带宽（#15 后续），全局或按票。设了且有 ATR 数据时，门控带宽 = `mult × ATR%`（`ATR% = avg_atr_20d / price × 100`），替代固定百分比——波动大的票更宽、安静的更窄。钳到 `[proximity_pct_floor, proximity_pct_ceiling]`（默认 4–20%）；无 ATR 数据时回退 `min_price_proximity_pct`。用 `scripts/calibrate_atr_proximity.py` 校准 |
 | `max_tier1_pipelines_per_day` | Tier 1 盘中重扫上限（#23），全局或按票。每次 Tier 1 信号触发都会跑一条付费 `[market+social]` pipeline + 顾问（仅受每信号冷却约束），所以一只票一天触发多种信号会叠加多次付费重扫（实测 KLAC×4、LRCX×3）。该值上限每票每 UTC 日的 Tier 1 LLM pipeline 次数；超限的触发仍记录+推送（`Signal Fired (rescan capped)`）但跳过 pipeline。按票用同名键覆盖；删除/留空即全局关闭。Tier 2 定时跑不受影响 |
 | `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
@@ -168,8 +168,8 @@ sudo systemctl enable --now watchy-update.timer
 
 | 触发条件 Trigger | 分析师 Analysts | 辩论 Debate | 风险管理 Risk |
 |------------------|----------------|-------------|---------------|
-| Tier 2 交易日运行（周一–五） | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 简化 Simplified |
-| Tier 2 周日运行 | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 完整三维 Full 3-way |
+| Tier 2 普通交易日 | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 简化 Simplified |
+| Tier 2 每周第一个交易日 | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 完整三维 Full 3-way |
 | Tier 2 周六 / NYSE 节假日 | —（跳过，休市且冗余） | — | — |
 | 金叉/死叉 | 市场 + 情绪 + 新闻 | 多空 | 完整三维 |
 | RSI、MACD、布林、强放量 (≥2x)、ATR | 市场 + 情绪 | 多空 | 简化 Simplified |

@@ -110,7 +110,7 @@ def create_tradingagents_runner(
 
         # Per-component token/cost breakdown (measurement only; one greppable
         # TOKENCOST line per run). Label encodes the analyst set + risk depth so
-        # FULL/subset and Sunday-full-risk runs can be told apart in the journal.
+        # FULL/subset and weekly-full-risk runs can be told apart in the journal.
         tracker.log_summary(ticker, f"{'+'.join(selected_analysts)}|risk{config['max_risk_discuss_rounds']}")
 
         # ---- 3. Save reports as markdown --------------------------------

@@ -4,8 +4,9 @@ Runs the full TradingAgents 4-analyst pipeline (Market, Sentiment, News,
 Fundamentals) with Bull/Bear debate for every ticker on the watchlist, catching
 gradual drift and fundamental shifts that technical triggers miss.
 
-Risk depth is day-of-week dependent (#14): simplified risk on weekdays, the full
-3-way risk debate on Sundays. See orchestrator.get_scheduled_spec.
+Risk depth is day-of-week dependent (#14): simplified risk on ordinary trading
+days, the full 3-way risk debate on the first trading day of each week. See
+orchestrator.get_scheduled_spec.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from watchy.advisor import get_advice, parse_price
 from watchy.config import TickerConfig, WatchyConfig
 from watchy.indicators import IndicatorBundle, compute_indicators
 from watchy.locks import TickerLockRegistry
+from watchy.market_calendar import is_weekly_full_risk_day
 from watchy.notify import TelegramNotifier
 from watchy.orchestrator import get_scheduled_spec, run_pipeline
 from watchy.positions import get_position_source
@@ -70,7 +72,7 @@ def run_daily_scan(
             pct = _effective_proximity_pct(entry.tc, config, entry.avg_atr, entry.price)
             logger.info(
                 "Tier 2 skip %s — not held, price %.2f outside %.2f%% of entry "
-                "target %.2f (weekday gate)",
+                "target %.2f (proximity gate)",
                 ticker, entry.price, pct, entry.target,
             )
             results[ticker] = {
@@ -291,14 +293,15 @@ def _should_skip_tier2(
 ) -> bool:
     """Whether Tier 2 should skip this ticker on this day (#15).
 
-    Held tickers are never gated (capital at risk → always analyse). Sunday is
-    never gated (weekly full run). Otherwise skip only when a proximity percent
-    applies (ATR-adaptive or fixed, per-ticker or global) and price is outside
-    that band of the effective *entry* target.
+    Held tickers are never gated (capital at risk → always analyse). The first
+    trading day of the week (the weekly full-risk run) is never gated, so every
+    ticker gets one guaranteed full pass per week. Otherwise skip only when a
+    proximity percent applies (ATR-adaptive or fixed, per-ticker or global) and
+    price is outside that band of the effective *entry* target.
     """
-    if held:                 # never gate a position you hold
+    if held:                              # never gate a position you hold
         return False
-    if now.weekday() == 6:   # Sunday — always run
+    if is_weekly_full_risk_day(now):      # weekly full-risk run — always run
         return False
     pct = _effective_proximity_pct(tc, config, avg_atr, price)
     if pct is None:

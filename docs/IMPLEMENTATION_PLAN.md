@@ -80,11 +80,14 @@ free with zero upkeep. If built then, gate it strictly:
 
 ## Resolved design decisions (context)
 - **#13** crossover → `== 0` / `== 1` (not `not prev`, which false-fires on a ticker's first scan).
-- **#14** Tier 2 → weekdays simplified risk, **Sunday** full 3-way risk; **Saturday skipped**
-  (reuses Friday's close, superseded by Sunday, nothing trades till Monday). Extended to skip
-  **all non-trading weekdays** (NYSE holidays, e.g. July 3) via the XNYS calendar's `is_session`;
-  Sunday still forced on for the risk debate, weekday fallback stays Saturday-only if the calendar
-  can't load.
+- **#14** Tier 2 → ordinary trading days simplified risk, **first trading day of the week** full
+  3-way risk. Runs **only on XNYS trading days** (weekends + holidays skipped via `is_session`).
+  The weekly full-risk run rides the first session of the week (usually Mon; shifts to Tue when Mon
+  is a holiday) instead of a separate weekend run — the old Sunday+Monday pair analysed the same
+  stale Friday close, so dropping the weekend run removes that duplication while keeping the weekly
+  full-risk guarantee. Shared calendar helpers live in `watchy/market_calendar.py`
+  (`is_trading_day`, `is_weekly_full_risk_day`); the gate (#15) never gates the weekly full day.
+  Calendar-less fallback: trading day = Mon–Fri, weekly full day = Monday.
 - **#8** level signals → fire on entry (transition-aware); `state._migrate()` ALTER TABLEs the new
   columns into the live VPS `state.db`.
 - **#7** → Tier 1 only runs in the US regular session (`exchange_calendars`, DST/holiday correct);

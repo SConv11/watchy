@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable
 
+from watchy.market_calendar import is_weekly_full_risk_day
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,17 +124,20 @@ SIGNAL_PIPELINE: dict[str, PipelineSpec] = {
 def get_scheduled_spec(when: datetime) -> PipelineSpec:
     """Pipeline spec for a Tier 2 scheduled daily run (#14).
 
-    Daily (any weekday): the full 4-analyst set (Market, Sentiment, News,
+    Daily (any trading day): the full 4-analyst set (Market, Sentiment, News,
     Fundamentals) + Bull/Bear debate + *simplified* risk.
 
-    Sundays (``weekday() == 6``): escalate to ``RiskMode.FULL`` — the 3-way
+    First trading day of the week: escalate to ``RiskMode.FULL`` — the 3-way
     Aggressive/Conservative/Neutral risk debate — so every ticker gets guaranteed
     weekly risk-debate coverage. The debate is expensive, hence weekly not daily.
+    Riding it on the first session of the week (not a separate weekend run) avoids
+    paying twice for the same stale Friday close, and keeps the weekly guarantee
+    even when Monday is a holiday (shifts to Tuesday).
     """
     return PipelineSpec(
         analysts=AnalystSet.FULL,
         debate=DebateMode.BULL_BEAR,
-        risk=RiskMode.FULL if when.weekday() == 6 else RiskMode.SIMPLIFIED,
+        risk=RiskMode.FULL if is_weekly_full_risk_day(when) else RiskMode.SIMPLIFIED,
     )
 
 

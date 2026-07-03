@@ -46,24 +46,27 @@ average staircase confirmation), RSI extremes, MACD crossovers, Bollinger band
 breaches, volume anomalies, and ATR spikes. When a signal fires, it launches a
 graduated subset of TradingAgents analysts sized to the signal's significance.
 
-**Tier 2** runs at a configured UTC time on **US trading days plus Sunday**;
-weekends and NYSE holidays (e.g. July 3) are skipped as redundant — the market is
-closed, the run would only re-chew the prior close, and nothing is tradable that
-day. (**Sunday still runs** for the weekly risk debate + weekend news.) For every
+**Tier 2** runs at a configured UTC time on **US trading days only**; weekends and
+NYSE holidays (e.g. July 3) are skipped as redundant — the market is closed, the
+run would only re-chew the prior close, and nothing is tradable that day. For every
 watchlist ticker it launches the full
 four-analyst pipeline (Market + Sentiment + News + Fundamentals) with a Bull/Bear
-debate. Risk-management depth is day-of-week dependent: **simplified on weekdays,
-escalated to the full 3-way risk debate on Sundays.**
+debate. Risk-management depth is day-of-week dependent: **simplified on ordinary
+trading days, escalated to the full 3-way risk debate on the first trading day of
+each week** (usually Monday; shifts to Tuesday when Monday is a holiday, so every
+ticker still gets one guaranteed full-risk run per week without paying for a
+separate weekend run on the stale Friday close).
 
 **Tier 2 price-proximity gate (#15):** set a **global default** percent via the
 top-level `min_price_proximity_pct` (applied to every watch-only ticker; a
-per-ticker `min_price_proximity_pct` overrides it). **On weekdays**, the expensive
-LLM pipeline is skipped when the current price is farther than that percent from
-the **entry target** (saving DeepSeek cost). The gate is **watch-only**: **a
-ticker you currently hold (the position source reports a non-zero position) is
-always analysed**, regardless of price — capital at risk is worth the daily
-tokens (a position-lookup error is treated as "held" too, erring toward running).
-**Sunday always runs** (a weekly full update incl. news). The entry target uses a
+per-ticker `min_price_proximity_pct` overrides it). On ordinary trading days the
+expensive LLM pipeline is skipped when the current price is farther than that
+percent from the **entry target** (saving DeepSeek cost). The gate is
+**watch-only**: **a ticker you currently hold (the position source reports a
+non-zero position) is always analysed**, regardless of price — capital at risk is
+worth the daily tokens (a position-lookup error is treated as "held" too, erring
+toward running). **The weekly full-risk run (first trading day of the week) always
+runs** every ticker (a weekly full update incl. news). The entry target uses a
 manual `target_price` first, otherwise an **auto-derived value (#16)**: each Tier
 2 run extracts it from the advisor's structured `Target:` field — semantically an
 **entry / accumulation level only** (not a stop-loss, not a take-profit) — and
@@ -172,8 +175,8 @@ See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key se
 
 | Setting | Purpose |
 |---------|---------|
-| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 weekday gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on Sunday or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
-| `min_price_proximity_pct` | **Global default** percent for the Tier 2 proximity gate (#15), applied to every watch-only (non-held) ticker; on weekdays skip the daily LLM when price is farther than this from the entry target. Held tickers and Sunday always run; Tier 1 is unaffected. Override per-ticker with the same key. Remove to disable globally. |
+| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 proximity gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on the weekly full-risk day or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
+| `min_price_proximity_pct` | **Global default** percent for the Tier 2 proximity gate (#15), applied to every watch-only (non-held) ticker; on ordinary trading days skip the daily LLM when price is farther than this from the entry target. Held tickers and the weekly full-risk run (first trading day of the week) always run; Tier 1 is unaffected. Override per-ticker with the same key. Remove to disable globally. |
 | `atr_proximity_mult` | Optional ATR-adaptive band (#15 follow-up), global or per-ticker. When set (and ATR data is available), the gate band is `mult × ATR%` (`ATR% = avg_atr_20d / price × 100`) instead of the fixed percent — wider for volatile names, narrower for calm ones. Clamped to `[proximity_pct_floor, proximity_pct_ceiling]` (default 4–20%); falls back to `min_price_proximity_pct` without ATR data. Calibrate with `scripts/calibrate_atr_proximity.py`. |
 | `signal_thresholds` | Detection thresholds for RSI, volume, ATR, etc. |
 | `cooldown` | Per-signal cooldown window to suppress repeat pushes |
@@ -218,9 +221,9 @@ the signal's significance:
 
 | Trigger | Analysts | Debate | Risk |
 |---------|----------|--------|------|
-| Tier 2 trading day (Mon–Fri) | Market + Sentiment + News + Fundamentals | Bull/Bear | Simplified |
-| Tier 2 Sunday | Market + Sentiment + News + Fundamentals | Bull/Bear | Full 3-way |
-| Tier 2 Saturday / NYSE holiday | — (skipped, market closed & redundant) | — | — |
+| Tier 2 ordinary trading day | Market + Sentiment + News + Fundamentals | Bull/Bear | Simplified |
+| Tier 2 first trading day of week | Market + Sentiment + News + Fundamentals | Bull/Bear | Full 3-way |
+| Tier 2 weekend / NYSE holiday | — (skipped, market closed & redundant) | — | — |
 | Golden / Death Cross | Market + Sentiment + News | Bull/Bear | Full 3-way |
 | RSI, MACD, Bollinger, strong volume, ATR | Market + Sentiment | Bull/Bear | Simplified |
 | Moderate volume (≥1.5x) | Market only | None | None |
