@@ -90,8 +90,11 @@ most important names were analysed first. Indicators are pre-fetched once per
 ticker (throttled) and reused by the pipeline (no double fetch).
 
 **After every analysis**, Watchy fetches the ticker's current position, calls a
-lightweight LLM (Gemini by default) to synthesize the analysis report + position
-into actionable advice, and pushes a natural-language summary to Telegram.
+lightweight LLM (Gemini by default) to synthesize a **condensed analysis digest**
+(the decision chain + each analyst's summary tail, not the full prose) + position
+into actionable advice, and pushes a natural-language summary to Telegram. The
+advisor's own token usage is logged as a `GEMINICOST` line; its thinking mode is
+off by default and tunable via `llm.gemini_thinking_budget` in `secrets.yaml`.
 
 **The position source (#4) is layered, so it keeps working when Schwab can't
 refresh:**
@@ -281,7 +284,7 @@ watchy/
     ├── indicators.py         # technical-indicator computation (yfinance + pandas, no LLM)
     ├── proximity.py          # shared price-proximity gate (Tier 1 & Tier 2)
     ├── orchestrator.py       # graduated pipeline selection per signal type
-    ├── advisor.py            # LLM synthesis: analysis report + position → advice
+    ├── advisor.py            # LLM synthesis: analysis digest + position → advice (GEMINICOST log)
     ├── positions.py          # layered position source: Schwab → cached snapshot → manual file
     ├── schwab.py             # Schwab brokerage API client (live layer, schwabdev)
     ├── notify.py             # Telegram bot notifications
