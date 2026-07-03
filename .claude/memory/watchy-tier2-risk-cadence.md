@@ -30,3 +30,15 @@ scheduled_daily = simplified, scheduled_weekly = full).
 
 Two "debate" types, don't conflate: **Bull/Bear** (DebateMode.BULL_BEAR, runs
 daily in Tier 2 + most Tier 1) vs **3-way risk** (RiskMode.FULL, now weekly Sunday).
+
+## Holiday skip (2026-07-03)
+
+`_is_tier2_day()` originally skipped Saturday only (`weekday() != 5`), so it ran
+on weekday NYSE holidays (e.g. July 3, Independence-Day-observed) — wasted a full
+weekday batch analysing the prior close with nothing tradable. Now: **run iff
+Sunday (forced, risk debate) OR the date is an XNYS trading session** (`is_session`
+via the shared `_get_market_calendar()` helper, factored out of `_is_market_open`).
+Weekday fallback if the calendar can't load stays Saturday-only skip (holiday-blind).
+So Tier 2 skips weekends + weekday holidays; Sunday always runs; Tier 1 was already
+holiday-correct (market-hours gated). Tests in `tests/test_daemon.py`
+(`test_weekday_holiday_is_not_a_tier2_day`).

@@ -46,8 +46,11 @@ average staircase confirmation), RSI extremes, MACD crossovers, Bollinger band
 breaches, volume anomalies, and ATR spikes. When a signal fires, it launches a
 graduated subset of TradingAgents analysts sized to the signal's significance.
 
-**Tier 2** runs at a configured UTC time (**Mon–Fri + Sun**; Saturday is skipped
-as redundant with Sunday). For every watchlist ticker it launches the full
+**Tier 2** runs at a configured UTC time on **US trading days plus Sunday**;
+weekends and NYSE holidays (e.g. July 3) are skipped as redundant — the market is
+closed, the run would only re-chew the prior close, and nothing is tradable that
+day. (**Sunday still runs** for the weekly risk debate + weekend news.) For every
+watchlist ticker it launches the full
 four-analyst pipeline (Market + Sentiment + News + Fundamentals) with a Bull/Bear
 debate. Risk-management depth is day-of-week dependent: **simplified on weekdays,
 escalated to the full 3-way risk debate on Sundays.**
@@ -215,9 +218,9 @@ the signal's significance:
 
 | Trigger | Analysts | Debate | Risk |
 |---------|----------|--------|------|
-| Tier 2 daily (Mon–Fri) | Market + Sentiment + News + Fundamentals | Bull/Bear | Simplified |
+| Tier 2 trading day (Mon–Fri) | Market + Sentiment + News + Fundamentals | Bull/Bear | Simplified |
 | Tier 2 Sunday | Market + Sentiment + News + Fundamentals | Bull/Bear | Full 3-way |
-| Tier 2 Saturday | — (skipped, redundant with Sunday) | — | — |
+| Tier 2 Saturday / NYSE holiday | — (skipped, market closed & redundant) | — | — |
 | Golden / Death Cross | Market + Sentiment + News | Bull/Bear | Full 3-way |
 | RSI, MACD, Bollinger, strong volume, ATR | Market + Sentiment | Bull/Bear | Simplified |
 | Moderate volume (≥1.5x) | Market only | None | None |

@@ -38,7 +38,7 @@
 
 **Tier 1（第一层）**按可配间隔（默认每小时）逐票扫描，**仅在美股常规交易时段运行**（休市、周末、节假日自动跳过——靠 `exchange_calendars` 判断，含夏令时/DST 修正）。通过 yfinance 获取 OHLCV 数据并计算技术指标（technical indicators），不调用任何 LLM。检测 10 种信号类型，包括金叉/死叉（golden/death cross，含完整均线阶梯确认 full MA staircase）、RSI 极值、MACD 交叉、布林带突破（Bollinger breach）、成交量异动（volume anomaly）和 ATR 飙升。信号触发时，根据信号重要程度启动分级（graduated）的 TradingAgents 分析师子集。
 
-**Tier 2（第二层）**在配置的 UTC 时间运行（**周一–五 + 周日**，周六跳过，因与周日运行冗余）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
+**Tier 2（第二层）**在配置的 UTC 时间运行（**美股交易日 + 周日**；周末与 NYSE 节假日（如 7/3）跳过——当日休市、只会重复分析前一日收盘、且无法交易，属冗余成本；**周日仍跑**，做每周风险辩论 + 周末新闻）。对自选股中的每一只票启动完整的四分析师流水线（市场 Market + 情绪 Sentiment + 新闻 News + 基本面 Fundamentals）+ 多空辩论（Bull/Bear debate），风险管理深度按日：**工作日为简化（simplified），周日升级为完整三维风险辩论（3-way risk debate）**。
 
 **Tier 2 价格邻近门控（price-proximity gate，#15）**：用顶层 `min_price_proximity_pct` 设一个**全局默认**百分比（自动套到所有 watch-only 票；也可在长表里按票用同名键 `min_price_proximity_pct` 覆盖），**工作日**若现价离 **入场目标价（entry target）** 超过该百分比，就跳过这次昂贵的 LLM 流水线（省 DeepSeek 成本）。门控只针对 **watch-only（非持仓）** 的票：**只要当前持有该票（position source 查到非零持仓），Tier 2 永远运行**——有资金敞口就值得每天分析，与价格无关（持仓查询出错时也按"持有"处理，宁可多跑）。**周日永远运行**（每周一次完整更新，含新闻）。入场目标价优先用手动 `target_price`，否则用 **自动推导值（#16）**：每次 Tier 2 运行时从顾问输出的结构化 `Target:` 字段提取（语义明确为"建仓/加仓的入场价"，不是止损也不是止盈）并存入 `state.db`（手动值始终优先）。注意 **Tier 1 永不门控**——它是每 30 分钟的常开雷达，远离目标的票之间靠 Tier 1 信号兜底。
 
@@ -168,9 +168,9 @@ sudo systemctl enable --now watchy-update.timer
 
 | 触发条件 Trigger | 分析师 Analysts | 辩论 Debate | 风险管理 Risk |
 |------------------|----------------|-------------|---------------|
-| Tier 2 每日运行（周一–五） | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 简化 Simplified |
+| Tier 2 交易日运行（周一–五） | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 简化 Simplified |
 | Tier 2 周日运行 | 市场 + 情绪 + 新闻 + 基本面 | 多空 Bull/Bear | 完整三维 Full 3-way |
-| Tier 2 周六 | —（跳过，与周日运行冗余） | — | — |
+| Tier 2 周六 / NYSE 节假日 | —（跳过，休市且冗余） | — | — |
 | 金叉/死叉 | 市场 + 情绪 + 新闻 | 多空 | 完整三维 |
 | RSI、MACD、布林、强放量 (≥2x)、ATR | 市场 + 情绪 | 多空 | 简化 Simplified |
 

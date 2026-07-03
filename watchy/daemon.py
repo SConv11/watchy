@@ -130,6 +130,29 @@ def _regular_session_window(now: datetime) -> bool:
     return _MARKET_OPEN_UTC <= now.timetz().replace(tzinfo=None) <= _MARKET_CLOSE_UTC
 
 
+def _get_market_calendar():
+    """Lazily load the XNYS exchange calendar, or None if it can't be loaded.
+
+    Shared by the Tier 1 market-hours guard and the Tier 2 trading-day guard so
+    both degrade to their weekday fallbacks together.
+    """
+    global _market_calendar, _market_calendar_failed
+    if _market_calendar_failed:
+        return None
+    if _market_calendar is None:
+        try:
+            import exchange_calendars as xcals
+            _market_calendar = xcals.get_calendar("XNYS")
+        except Exception:
+            logging.getLogger("watchy.daemon").warning(
+                "exchange_calendars unavailable; using weekday fallbacks",
+                exc_info=True,
+            )
+            _market_calendar_failed = True
+            return None
+    return _market_calendar
+
+
 def _is_market_open(now: datetime | None = None) -> bool:
     """True if the US equity market (XNYS) is in its regular session.
 
@@ -138,20 +161,16 @@ def _is_market_open(now: datetime | None = None) -> bool:
     calendar can't be loaded.
     """
     now = now or datetime.now(timezone.utc)
-    global _market_calendar, _market_calendar_failed
-    if not _market_calendar_failed:
+    cal = _get_market_calendar()
+    if cal is not None:
         try:
             import pandas as pd
-            if _market_calendar is None:
-                import exchange_calendars as xcals
-                _market_calendar = xcals.get_calendar("XNYS")
-            return bool(_market_calendar.is_open_on_minute(pd.Timestamp(now).tz_convert("UTC")))
+            return bool(cal.is_open_on_minute(pd.Timestamp(now).tz_convert("UTC")))
         except Exception:
             logging.getLogger("watchy.daemon").warning(
-                "exchange_calendars unavailable; using weekday/UTC-window market check",
+                "exchange_calendars minute check failed; using weekday/UTC-window",
                 exc_info=True,
             )
-            _market_calendar_failed = True
     return _regular_session_window(now)
 
 
@@ -183,15 +202,28 @@ def _tier1_job(
 
 
 def _is_tier2_day(now: datetime | None = None) -> bool:
-    """Tier 2 runs every day except Saturday (#14 cadence refinement).
+    """Tier 2 runs on US trading days plus Sunday; it skips weekends and holidays.
 
-    Sat–Mon all analyze the same frozen Friday close; Saturday's run is superseded
-    by Sunday's (which adds the weekly 3-way risk debate and more complete weekend
-    news), and nothing is tradable until Monday — so Saturday is redundant cost.
-    Sunday and the weekdays still run.
+    Sunday always runs (weekly 3-way risk debate + more complete weekend news).
+    Saturday and weekday market holidays (e.g. July 3) are skipped: the market is
+    closed, the run would only re-chew the prior close, and nothing is tradable
+    that day — redundant cost. Falls back to a weekday check (Saturday-only skip,
+    holiday-blind) if the exchange calendar can't be loaded.
     """
     now = now or datetime.now(timezone.utc)
-    return now.weekday() != 5  # 5 = Saturday
+    if now.weekday() == 6:  # Sunday — always (risk debate)
+        return True
+    cal = _get_market_calendar()
+    if cal is not None:
+        try:
+            import pandas as pd
+            return bool(cal.is_session(pd.Timestamp(now.date())))
+        except Exception:
+            logging.getLogger("watchy.daemon").warning(
+                "exchange_calendars session check failed; weekday fallback",
+                exc_info=True,
+            )
+    return now.weekday() != 5  # fallback: Saturday-only skip (holiday-blind)
 
 
 def _tier2_job(
@@ -203,7 +235,7 @@ def _tier2_job(
 ) -> None:
     logger = logging.getLogger("watchy.daemon")
     if not _is_tier2_day():
-        logger.debug("Tier 2 skipped — Saturday (redundant with Sunday's run)")
+        logger.debug("Tier 2 skipped — market closed (weekend/holiday, non-Sunday)")
         return
     try:
         run_daily_scan(

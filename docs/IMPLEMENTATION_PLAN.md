@@ -81,7 +81,10 @@ free with zero upkeep. If built then, gate it strictly:
 ## Resolved design decisions (context)
 - **#13** crossover → `== 0` / `== 1` (not `not prev`, which false-fires on a ticker's first scan).
 - **#14** Tier 2 → weekdays simplified risk, **Sunday** full 3-way risk; **Saturday skipped**
-  (reuses Friday's close, superseded by Sunday, nothing trades till Monday).
+  (reuses Friday's close, superseded by Sunday, nothing trades till Monday). Extended to skip
+  **all non-trading weekdays** (NYSE holidays, e.g. July 3) via the XNYS calendar's `is_session`;
+  Sunday still forced on for the risk debate, weekday fallback stays Saturday-only if the calendar
+  can't load.
 - **#8** level signals → fire on entry (transition-aware); `state._migrate()` ALTER TABLEs the new
   columns into the live VPS `state.db`.
 - **#7** → Tier 1 only runs in the US regular session (`exchange_calendars`, DST/holiday correct);
