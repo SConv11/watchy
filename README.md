@@ -93,8 +93,9 @@ ticker (throttled) and reused by the pipeline (no double fetch).
 lightweight LLM (Gemini by default) to synthesize a **condensed analysis digest**
 (the decision chain + each analyst's summary tail, not the full prose) + position
 into actionable advice, and pushes a natural-language summary to Telegram. The
-advisor's own token usage is logged as a `GEMINICOST` line; its thinking mode is
-off by default and tunable via `llm.gemini_thinking_budget` in `secrets.yaml`.
+advisor's own token usage is logged as a `GEMINICOST` line; its thinking level is
+per-tier (`llm.gemini_thinking_tier1` = off, `llm.gemini_thinking_tier2` = low) in
+`secrets.yaml`.
 
 **The position source (#4) is layered, so it keeps working when Schwab can't
 refresh:**

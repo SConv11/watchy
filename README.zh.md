@@ -46,7 +46,7 @@
 
 **Tier 2 批次顺序（#21）**：每日批次**先跑持仓票**（有资金敞口），再跑 watch-only 中**离目标最近**的，无目标价的票排最后——这样长批次被打断（auto-update 重启、崩溃、token 过期）时，最重要的票已经分析过。指标每票预取一次（throttled）并被流水线复用，不重复抓取。
 
-**每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将**精简后的分析摘要（digest：决策链 + 各分析师的总结尾巴，非全文）**与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。顾问自身的 token 用量打成 `GEMINICOST` 行；其 thinking 默认关闭，可用 `secrets.yaml` 的 `llm.gemini_thinking_budget` 调节。
+**每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将**精简后的分析摘要（digest：决策链 + 各分析师的总结尾巴，非全文）**与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。顾问自身的 token 用量打成 `GEMINICOST` 行；其 thinking 档位按层设置（`secrets.yaml` 里 `llm.gemini_thinking_tier1`=off、`llm.gemini_thinking_tier2`=low）。
 
 **持仓数据源（position source，#4）是分层的，保证 Schwab 无法刷新时仍可用**：
 

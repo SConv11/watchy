@@ -7,8 +7,18 @@ from watchy.advisor import (
     _effective_key,
     _format_analysis,
     _gemini_cost_usd,
+    _gemini_thinking_config,
     _parse_advice,
 )
+
+
+class TestGeminiThinkingConfig:
+    def test_off_uses_legacy_budget_zero(self):
+        assert _gemini_thinking_config("off") == {"thinkingBudget": 0}
+
+    def test_levels_use_thinking_level(self):
+        assert _gemini_thinking_config("low") == {"thinkingLevel": "low"}
+        assert _gemini_thinking_config("medium") == {"thinkingLevel": "medium"}
 
 
 class TestGeminiCost:

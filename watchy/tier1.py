@@ -136,7 +136,10 @@ def _handle_signal(
         result = run_pipeline(ticker, spec, runner=pipeline_runner)
         store.complete_run(run_id, success=True, summary=result.get("summary", ""))
 
-        advice = get_advice(ticker, result, position_source, config)
+        advice = get_advice(
+            ticker, result, position_source, config,
+            thinking_level=config.llm.gemini_thinking_tier1,
+        )
 
         notifier.pipeline_result(
             ticker, sig, result,

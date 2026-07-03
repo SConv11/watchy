@@ -201,7 +201,10 @@ def _run_ticker(
 
             # synthesize advice (reuse the position source from the gate check)
             position_text = position_source.format_position_context(ticker)
-            advice = get_advice(ticker, result, position_source, config)
+            advice = get_advice(
+                ticker, result, position_source, config,
+                thinking_level=config.llm.gemini_thinking_tier2,
+            )
 
             # Auto-derive the Tier 2 proximity target (#16) from the advisor's
             # Target field, so the gate self-maintains. Manual config.target_price

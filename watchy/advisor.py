@@ -82,8 +82,13 @@ def get_advice(
     analysis_result: dict[str, Any],
     position_source: PositionSource,
     config: WatchyConfig,
+    thinking_level: str = "off",
 ) -> dict[str, str] | None:
     """Synthesize position-aware advice from analysis + portfolio.
+
+    ``thinking_level`` (gemini only): off / minimal / low / medium / high. The
+    caller passes the per-tier level (Tier 1 = cheap, Tier 2 = low); ignored by
+    the non-gemini providers.
 
     Returns a dict with keys: ticker, decision, urgency, detail.
     Returns None if no LLM key is configured or the call fails.
@@ -112,7 +117,7 @@ def get_advice(
         elif llm.provider in ("openai", "deepseek"):
             result = _call_openai_compatible(prompt, llm)
         elif llm.provider == "gemini":
-            result = _call_gemini(prompt, llm, ticker)
+            result = _call_gemini(prompt, llm, ticker, thinking_level)
         else:
             logger.warning("Unknown LLM provider: %s", llm.provider)
             return None
@@ -384,7 +389,16 @@ def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
         return data["choices"][0]["message"]["content"]
 
 
-def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "") -> str:
+def _gemini_thinking_config(level: str) -> dict:
+    """Map a thinking level to the gemini-3.x generateContent thinkingConfig.
+
+    gemini-3.x uses ``thinkingLevel`` (minimal/low/medium/high); "off" falls back
+    to the legacy ``thinkingBudget: 0`` which still forces thoughts to zero.
+    """
+    return {"thinkingBudget": 0} if level == "off" else {"thinkingLevel": level}
+
+
+def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "", level: str = "off") -> str:
     """Call Google Gemini API for advice synthesis.
 
     Uses the Gemini REST API (not Vertex AI).
@@ -395,16 +409,14 @@ def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "") -> str:
     model = llm.model or "gemini-3.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_effective_key(llm)}"
 
-    # Gemini 2.5 counts hidden "thinking" tokens against the output budget. When
-    # thinking is enabled (budget != 0) give the visible answer its own headroom
-    # on top of the thinking allowance so it isn't starved / truncated.
-    budget = getattr(llm, "gemini_thinking_budget", -1)
-    max_out = _ADVICE_MAX_TOKENS if budget == 0 else _ADVICE_MAX_TOKENS + _GEMINI_THINK_HEADROOM
+    # Thinking tokens share the output budget, so when thinking is on give the
+    # visible answer its own headroom on top of the thinking allowance.
+    max_out = _ADVICE_MAX_TOKENS if level == "off" else _ADVICE_MAX_TOKENS + _GEMINI_THINK_HEADROOM
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "maxOutputTokens": max_out,
-            "thinkingConfig": {"thinkingBudget": budget},
+            "thinkingConfig": _gemini_thinking_config(level),
         },
     }).encode()
 
@@ -425,8 +437,8 @@ def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "") -> str:
         out_tok = int(usage.get("candidatesTokenCount", 0))
         think_tok = int(usage.get("thoughtsTokenCount", 0))
         logger.info(
-            "GEMINICOST %s model=%s in=%d out=%d think=%d usd=%.5f",
-            ticker or "-", model, in_tok, out_tok, think_tok,
+            "GEMINICOST %s model=%s think_level=%s in=%d out=%d think=%d usd=%.5f",
+            ticker or "-", model, level, in_tok, out_tok, think_tok,
             _gemini_cost_usd(in_tok, out_tok, think_tok),
         )
     except Exception:

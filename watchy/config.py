@@ -67,13 +67,14 @@ class LLMConfig:
     api_key: str = ""
     api_base: str | None = None
     deepseek_api_key: str = ""
-    # Gemini advisor thinking budget (only used when provider == "gemini"):
-    #   0 = OFF (default), -1 = dynamic (model decides, thinking ON), >0 = fixed cap.
-    # Default OFF pending an A/B on whether thinking improves the advice — at
-    # gemini-3.5-flash's $9/1M output rate, thinking is expensive. Set -1 in
-    # secrets.yaml to turn it on. When non-zero, advisor._call_gemini adds answer
-    # headroom so thinking doesn't starve the visible reply.
-    gemini_thinking_budget: int = 0
+    # Gemini advisor thinking level per tier (only used when provider == "gemini").
+    # gemini-3.x controls thinking with thinkingConfig.thinkingLevel; "off" uses the
+    # legacy thinkingBudget=0 to force zero thoughts. Valid: off / minimal / low /
+    # medium / high. Tier 1 advice rides frequent intraday signals → keep it cheap
+    # (off); Tier 2 is the daily read → low (measured: ~$0.016/call for the extra
+    # reasoning at gemini-3.5-flash's $9/1M, decision unchanged but richer detail).
+    gemini_thinking_tier1: str = "off"
+    gemini_thinking_tier2: str = "low"
 
 
 @dataclass
