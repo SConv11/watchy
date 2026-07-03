@@ -223,9 +223,10 @@ watchy/
     ├── config.py             # YAML 配置 → 类型化数据类 (dataclass)
     ├── state.py              # SQLite 状态存储 (交叉记忆、冷却、历史)
     ├── indicators.py         # 技术指标计算 (yfinance + pandas, 无 LLM)
+    ├── market_calendar.py    # XNYS 交易日历助手 (交易日 / 每周首个交易日)
     ├── orchestrator.py       # 按信号类型的分级流水线选择
     ├── pipeline_runner.py    # TradingAgents 桥接: PipelineSpec → TradingAgentsGraph
-    ├── token_tracker.py      # DeepSeek 组件级 token/成本追踪 (TOKENCOST 日志行)
+    ├── token_tracker.py      # DeepSeek 组件级 token/成本追踪 (TOKENCOST 行, 含 thinking token 拆分)
     ├── advisor.py            # LLM 合成: 分析报告 + 持仓 → 交易建议
     ├── positions.py          # 分层持仓源: Schwab → 缓存快照 → 手动文件
     ├── schwab.py             # Schwab 券商 API 客户端 (实时层, schwabdev)

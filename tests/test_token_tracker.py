@@ -10,13 +10,14 @@ from watchy.token_tracker import (
 )
 
 
-def _resp(model, input_tok, output_tok, cache_read=0):
+def _resp(model, input_tok, output_tok, cache_read=0, reasoning=0):
     """Build a minimal LLMResult-like object with usage_metadata on the message."""
     msg = SimpleNamespace(
         usage_metadata={
             "input_tokens": input_tok,
             "output_tokens": output_tok,
             "input_token_details": {"cache_read": cache_read},
+            "output_token_details": {"reasoning": reasoning},
         }
     )
     gen = SimpleNamespace(message=msg)
@@ -52,8 +53,14 @@ class TestCost:
 
 class TestExtractUsage:
     def test_reads_usage_metadata(self):
-        inp, cached, out, model = _extract_usage(_resp("deepseek-v4-pro", 100, 40, 25))
-        assert (inp, cached, out, model) == (100, 25, 40, "deepseek-v4-pro")
+        inp, cached, out, reason, model = _extract_usage(
+            _resp("deepseek-v4-pro", 100, 40, 25, reasoning=30)
+        )
+        assert (inp, cached, out, reason, model) == (100, 25, 40, 30, "deepseek-v4-pro")
+
+    def test_reasoning_defaults_to_zero(self):
+        _, _, _, reason, _ = _extract_usage(_resp("deepseek-v4-flash", 100, 40))
+        assert reason == 0
 
     def test_openai_style_fallback(self):
         resp = SimpleNamespace(
@@ -64,23 +71,24 @@ class TestExtractUsage:
                     "prompt_tokens": 200,
                     "completion_tokens": 50,
                     "prompt_tokens_details": {"cached_tokens": 30},
+                    "completion_tokens_details": {"reasoning_tokens": 35},
                 },
             },
         )
-        inp, cached, out, model = _extract_usage(resp)
-        assert (inp, cached, out) == (200, 30, 50)
+        inp, cached, out, reason, model = _extract_usage(resp)
+        assert (inp, cached, out, reason) == (200, 30, 50, 35)
 
     def test_empty_response_is_zero(self):
         resp = SimpleNamespace(generations=[], llm_output={})
-        assert _extract_usage(resp) == (0, 0, 0, "")
+        assert _extract_usage(resp) == (0, 0, 0, 0, "")
 
 
 class TestTrackerAttribution:
-    def _run(self, tracker, run_id, model, node, input_tok, output_tok, cache=0):
+    def _run(self, tracker, run_id, model, node, input_tok, output_tok, cache=0, reasoning=0):
         tracker.on_chat_model_start(
             {}, [], run_id=run_id, metadata={"langgraph_node": node, "ls_model_name": model}
         )
-        tracker.on_llm_end(_resp(model, input_tok, output_tok, cache), run_id=run_id)
+        tracker.on_llm_end(_resp(model, input_tok, output_tok, cache, reasoning), run_id=run_id)
 
     def test_attributes_by_model_and_node(self):
         t = TokenCostTracker()
@@ -94,6 +102,15 @@ class TestTrackerAttribution:
         # pro call should dominate cost despite fewer tokens
         assert t.by_model["pro"].usd > 0
         assert abs(t.total_usd() - (t.by_model["pro"].usd + t.by_model["flash"].usd)) < 1e-12
+
+    def test_reasoning_attributed_and_reported(self):
+        t = TokenCostTracker()
+        self._run(t, "r1", "deepseek-v4-pro", "Portfolio Manager", 500, 300, reasoning=210)
+        assert t.by_node["Portfolio Manager"].reasoning == 210
+        assert t.by_model["pro"].reasoning == 210
+        # reasoning surfaces in the greppable dict (a subset of "out")
+        d = t.by_node["Portfolio Manager"].as_dict()
+        assert d["reason"] == 210 and d["out"] == 300
 
     def test_node_falls_back_to_unknown(self):
         t = TokenCostTracker()

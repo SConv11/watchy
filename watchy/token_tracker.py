@@ -5,6 +5,11 @@ A LangChain callback handler that attributes DeepSeek token usage to both the
 analyst / debater / manager made the call), so we can see where the daily Tier 2
 cost actually goes before deciding what to trim.
 
+Also breaks out the *reasoning* (thinking/CoT) slice of the output tokens per
+model and node — DeepSeek V4 runs every node in thinking mode by default and
+bills the CoT as completion tokens, so this shows how much of the bill is
+thinking (and thus how much disabling it on a node could save).
+
 Wired in via ``TradingAgentsGraph(..., callbacks=[TokenCostTracker()])`` — the
 graph passes the handler to both LLM constructors (see trading_graph.py), so a
 single instance sees every call. Every handler body is exception-safe: a bug
@@ -44,17 +49,27 @@ def _cost_usd(model: str, input_tok: int, cached_tok: int, output_tok: int) -> f
 
 
 class _Bucket:
-    __slots__ = ("calls", "input", "cached", "output", "usd")
+    __slots__ = ("calls", "input", "cached", "output", "reasoning", "usd")
 
     def __init__(self) -> None:
-        self.calls = self.input = self.cached = self.output = 0
+        self.calls = self.input = self.cached = self.output = self.reasoning = 0
         self.usd = 0.0
 
-    def add(self, model: str, input_tok: int, cached_tok: int, output_tok: int) -> None:
+    def add(
+        self,
+        model: str,
+        input_tok: int,
+        cached_tok: int,
+        output_tok: int,
+        reasoning_tok: int = 0,
+    ) -> None:
         self.calls += 1
         self.input += input_tok
         self.cached += cached_tok
         self.output += output_tok
+        # reasoning_tok is a *subset* of output_tok (DeepSeek/OpenAI bill the CoT
+        # as completion tokens), tracked separately only to see the thinking share.
+        self.reasoning += reasoning_tok
         self.usd += _cost_usd(model, input_tok, cached_tok, output_tok)
 
     def as_dict(self) -> dict[str, Any]:
@@ -63,6 +78,7 @@ class _Bucket:
             "in": self.input,
             "cache": self.cached,
             "out": self.output,
+            "reason": self.reasoning,
             "usd": round(self.usd, 5),
         }
 
@@ -109,13 +125,13 @@ class TokenCostTracker(_Base):
     def on_llm_end(self, response, *, run_id=None, **kwargs):  # noqa: D102
         try:
             model, node = self._inflight.pop(run_id, ("unknown", "unknown"))
-            input_tok, cached_tok, output_tok, model_from_resp = _extract_usage(response)
+            input_tok, cached_tok, output_tok, reasoning_tok, model_from_resp = _extract_usage(response)
             if model == "unknown" and model_from_resp:
                 model = model_from_resp
             if input_tok == 0 and output_tok == 0:
                 return
-            self.by_model[_price_tier(model)].add(model, input_tok, cached_tok, output_tok)
-            self.by_node[node].add(model, input_tok, cached_tok, output_tok)
+            self.by_model[_price_tier(model)].add(model, input_tok, cached_tok, output_tok, reasoning_tok)
+            self.by_node[node].add(model, input_tok, cached_tok, output_tok, reasoning_tok)
         except Exception:
             logger.debug("TokenCostTracker end hook failed", exc_info=True)
 
@@ -142,11 +158,14 @@ class TokenCostTracker(_Base):
             logger.debug("TokenCostTracker log_summary failed", exc_info=True)
 
 
-def _extract_usage(response: Any) -> tuple[int, int, int, str]:
-    """Pull (input, cached, output, model) from an LLMResult, defensively.
+def _extract_usage(response: Any) -> tuple[int, int, int, int, str]:
+    """Pull (input, cached, output, reasoning, model) from an LLMResult, defensively.
 
     Prefers the normalized ``usage_metadata`` on the chat message (langchain-core
     1.x); falls back to ``llm_output['token_usage']`` (OpenAI-style dict).
+
+    ``reasoning`` is the thinking/CoT slice of ``output`` (DeepSeek V4 thinking
+    mode, OpenAI reasoning models) — a subset of ``output``, not additive.
     """
     model = ""
     try:
@@ -166,7 +185,9 @@ def _extract_usage(response: Any) -> tuple[int, int, int, str]:
                     output_tok = int(um.get("output_tokens", 0))
                     details = um.get("input_token_details") or {}
                     cached_tok = int(details.get("cache_read", 0))
-                    return input_tok, cached_tok, output_tok, model
+                    out_details = um.get("output_token_details") or {}
+                    reasoning_tok = int(out_details.get("reasoning", 0))
+                    return input_tok, cached_tok, output_tok, reasoning_tok, model
     except Exception:
         pass
 
@@ -178,8 +199,10 @@ def _extract_usage(response: Any) -> tuple[int, int, int, str]:
             output_tok = int(tu.get("completion_tokens", 0))
             details = tu.get("prompt_tokens_details") or {}
             cached_tok = int(details.get("cached_tokens", 0))
-            return input_tok, cached_tok, output_tok, model
+            out_details = tu.get("completion_tokens_details") or {}
+            reasoning_tok = int(out_details.get("reasoning_tokens", 0))
+            return input_tok, cached_tok, output_tok, reasoning_tok, model
     except Exception:
         pass
 
-    return 0, 0, 0, model
+    return 0, 0, 0, 0, model
