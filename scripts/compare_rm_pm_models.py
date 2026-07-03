@@ -52,7 +52,18 @@ RATING_RE = re.compile(
     re.IGNORECASE,
 )
 PRICE_RE = re.compile(r"\$?\d{2,6}(?:\.\d+)?")
-SECTION_RE = re.compile(r"^#{2,3}\s+(.+?)\s*$", re.MULTILINE)
+# The exact agent sub-headings _save_report writes ("### <name>"). Only these are
+# section boundaries — the analyst/researcher bodies contain their OWN #/##/###
+# headings (e.g. "## KEY METRICS SUMMARY TABLE", "### Long-Term Trend"), which
+# must stay in the body, not fragment it.
+_AGENTS = {
+    "Market Analyst", "Sentiment Analyst", "News Analyst", "Fundamentals Analyst",
+    "Bull Researcher", "Bear Researcher", "Research Manager", "Trader",
+    "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst", "Portfolio Manager",
+}
+# Roman-numeral team dividers ("## II. Research Team Decision") — distinct from the
+# analysts' own "## 1." / "## KEY METRICS" headings, so they can bound a section.
+_DIVIDER_RE = re.compile(r"^##\s+[IVXLC]+\.\s")
 
 
 @dataclass
@@ -72,20 +83,31 @@ class CellResult:
 
 
 def parse_report(text: str) -> dict[str, str]:
-    """Split a saved report into a {section-name: body} dict.
+    """Map each agent section (from _save_report) to its FULL body.
 
-    Sections are the ``## ``/``### `` headings written by
-    watchy.pipeline_runner._save_report (Bull Researcher, Bear Researcher,
-    Research Manager, Trader, Aggressive/Conservative/Neutral Analyst,
-    Portfolio Manager, the four analyst reports, …).
+    Only ``### <known agent name>`` lines are treated as boundaries; every other
+    heading (the roman ``## I.`` dividers and the analysts' own internal
+    ``##``/``###`` headings) stays in the body, so a report is not fragmented.
     """
     out: dict[str, str] = {}
-    matches = list(SECTION_RE.finditer(text))
-    for i, m in enumerate(matches):
-        name = m.group(1).strip()
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        out[name] = text[start:end].strip()
+    current: str | None = None
+    buf: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("### ") and stripped[4:].strip() in _AGENTS:
+            if current:
+                out[current] = "\n".join(buf).strip()
+            current = stripped[4:].strip()
+            buf = []
+        elif _DIVIDER_RE.match(stripped):
+            if current:
+                out[current] = "\n".join(buf).strip()
+            current = None
+            buf = []
+        elif current:
+            buf.append(line)
+    if current:
+        out[current] = "\n".join(buf).strip()
     return out
 
 

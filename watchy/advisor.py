@@ -18,9 +18,10 @@ from watchy.positions import PositionSource
 
 logger = logging.getLogger(__name__)
 
-ADVISOR_PROMPT = """You are a portfolio advisor. Below is a full analysis report from a
-team of financial analysts (market, sentiment, fundamentals, and risk), plus
-the user's current position and portfolio overview.
+ADVISOR_PROMPT = """You are a portfolio advisor. Below is a condensed analysis summary
+from a team of financial analysts (market, sentiment, fundamentals, and risk) —
+the final decision, risk assessment, trader plan, and each analyst's summary
+table — plus the user's current position and portfolio overview.
 
 Consider the user's overall portfolio composition when making your decision.
 Avoid over-concentration in any single sector or ticker. If the portfolio is
@@ -111,7 +112,7 @@ def get_advice(
         elif llm.provider in ("openai", "deepseek"):
             result = _call_openai_compatible(prompt, llm)
         elif llm.provider == "gemini":
-            result = _call_gemini(prompt, llm)
+            result = _call_gemini(prompt, llm, ticker)
         else:
             logger.warning("Unknown LLM provider: %s", llm.provider)
             return None
@@ -196,15 +197,65 @@ def parse_price(text: str | None) -> float | None:
     return sum(vals) / len(vals)
 
 
-def _format_analysis(result: dict[str, Any]) -> str:
-    """Build a rich analysis summary for the advisor LLM.
+def _analyst_summary_tail(text: str) -> str | None:
+    """Extract an analyst's summary tail: its final Markdown table plus the
+    conclusion that follows it (transaction proposal / final assessment / etc.),
+    to the end of the report.
 
-    Uses the full untruncated analyst reports when available (from
-    ``_reports``), falling back to the truncated summary fields.
+    Every analyst prompt instructs "append a Markdown table at the end … to
+    organize key points"; the table is preceded by the long analytical prose
+    (the token-heavy bulk we drop) and followed by a short actionable conclusion
+    (kept — it carries the analyst's crisp "why"). Anchors on the LAST contiguous
+    run of >=2 ``|``-rows and returns from there to the end. None if no table.
+    """
+    lines = text.splitlines()
+    n = len(lines)
+    last_table_start = None
+    i = 0
+    while i < n:
+        if "|" in lines[i] and lines[i].strip():
+            j = i
+            while j < n and "|" in lines[j] and lines[j].strip():
+                j += 1
+            if j - i >= 2:  # header + separator at minimum
+                last_table_start = i
+            i = j
+        else:
+            i += 1
+    if last_table_start is None:
+        return None
+    return "\n".join(lines[last_table_start:]).strip()
+
+
+def _format_analysis(result: dict[str, Any]) -> str:
+    """Build a compact analysis digest for the advisor LLM.
+
+    Deliberately omits the full analyst prose — the dominant advisor input-token
+    cost. The advisor synthesises an already-made decision, so it receives:
+
+      - the decision chain (final decision + risk assessment + trader plan),
+        which carries the rating and the concrete entry / stop / target levels;
+      - each analyst's summary tail — its final table plus the conclusion that
+        follows it — not the long analytical prose that precedes the table;
+      - the SEPA stage.
+
+    A report with no summary table falls back to its opening lines; with no
+    decision or reports at all, falls back to the truncated recommendations.
     """
     parts: list[str] = []
 
-    # Full analyst reports (preferred — no truncation)
+    # Decision chain — the rating and the concrete price levels live here.
+    decision = result.get("_decision_raw") or ""
+    if decision:
+        parts.append(f"--- Final Decision ---\n{decision}")
+    risk = result.get("risk_assessment")
+    if risk:
+        parts.append(f"--- Risk Assessment ---\n{risk}")
+    trader = result.get("trader_plan")
+    if trader:
+        parts.append(f"--- Trader Plan ---\n{trader}")
+
+    # Analyst signal: each report's trailing summary table, not the full prose.
     reports = result.get("_reports", {})
     for key, label in [
         ("market_report", "Market Analyst"),
@@ -213,26 +264,19 @@ def _format_analysis(result: dict[str, Any]) -> str:
         ("fundamentals_report", "Fundamentals Analyst"),
     ]:
         text = reports.get(key) or ""
-        if text:
-            parts.append(f"--- {label} ---\n{text}")
+        if not text:
+            continue
+        tail = _analyst_summary_tail(text)
+        snippet = tail if tail else (text.strip()[:400] + " …")
+        parts.append(f"--- {label} (summary) ---\n{snippet}")
 
-    # If no full reports, fall back to recommendations field
+    # Fallback: no decision and no reports → truncated recommendations field.
     if not parts:
         recs = result.get("recommendations", [])
         if recs:
             parts.append("Recommendations:\n" + "\n".join(recs))
 
-    # Risk assessment
-    risk = result.get("risk_assessment")
-    if risk:
-        parts.append(f"--- Risk Assessment ---\n{risk}")
-
-    # Trader plan + final decision (untruncated from _decision_raw)
-    decision = result.get("_decision_raw") or ""
-    if decision:
-        parts.append(f"--- Final Decision ---\n{decision}")
-
-    # SEPA stage context
+    # SEPA stage context.
     stage = result.get("stage_context", {})
     if stage:
         sepa = stage.get("sepa_stage")
@@ -255,6 +299,20 @@ def _format_analysis(result: dict[str, Any]) -> str:
 # sizing, reasons, risks. 600 tokens truncated it mid-sentence (and on Gemini 2.5
 # thinking models the budget is shared with hidden reasoning), so give it room.
 _ADVICE_MAX_TOKENS = 1024
+# Extra output headroom for the answer when Gemini thinking is enabled — thinking
+# tokens share maxOutputTokens, so the visible answer needs its own room on top.
+_GEMINI_THINK_HEADROOM = 2048
+
+# gemini-3.5-flash prices, USD per 1M tokens (update from ai.google.dev/pricing).
+# Thinking tokens are billed at the output rate. Used only for the greppable
+# GEMINICOST log estimate — the token counts logged are exact.
+_GEMINI_PRICE_IN = 1.50
+_GEMINI_PRICE_OUT = 9.00
+
+
+def _gemini_cost_usd(in_tok: int, out_tok: int, think_tok: int) -> float:
+    """Approximate USD for one Gemini call (thinking billed as output)."""
+    return (in_tok * _GEMINI_PRICE_IN + (out_tok + think_tok) * _GEMINI_PRICE_OUT) / 1_000_000
 
 
 def _effective_key(llm: LLMConfig) -> str:
@@ -326,7 +384,7 @@ def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
         return data["choices"][0]["message"]["content"]
 
 
-def _call_gemini(prompt: str, llm: LLMConfig) -> str:
+def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "") -> str:
     """Call Google Gemini API for advice synthesis.
 
     Uses the Gemini REST API (not Vertex AI).
@@ -334,17 +392,19 @@ def _call_gemini(prompt: str, llm: LLMConfig) -> str:
     """
     import urllib.request
 
-    model = llm.model or "gemini-2.5-flash"
+    model = llm.model or "gemini-3.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_effective_key(llm)}"
 
+    # Gemini 2.5 counts hidden "thinking" tokens against the output budget. When
+    # thinking is enabled (budget != 0) give the visible answer its own headroom
+    # on top of the thinking allowance so it isn't starved / truncated.
+    budget = getattr(llm, "gemini_thinking_budget", -1)
+    max_out = _ADVICE_MAX_TOKENS if budget == 0 else _ADVICE_MAX_TOKENS + _GEMINI_THINK_HEADROOM
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "maxOutputTokens": _ADVICE_MAX_TOKENS,
-            # gemini-2.5-flash counts hidden "thinking" tokens against the output
-            # budget; disable it so the whole budget produces the visible answer
-            # (this is a synthesis task, not one that needs extended reasoning).
-            "thinkingConfig": {"thinkingBudget": 0},
+            "maxOutputTokens": max_out,
+            "thinkingConfig": {"thinkingBudget": budget},
         },
     }).encode()
 
@@ -355,4 +415,26 @@ def _call_gemini(prompt: str, llm: LLMConfig) -> str:
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+
+    # Greppable cost line — the advisor (Gemini) is NOT covered by the DeepSeek
+    # TOKENCOST callback, so log its usage here. thoughtsTokenCount is the
+    # thinking slice (billed at the output rate); it's 0 when thinking is off.
+    try:
+        usage = data.get("usageMetadata", {})
+        in_tok = int(usage.get("promptTokenCount", 0))
+        out_tok = int(usage.get("candidatesTokenCount", 0))
+        think_tok = int(usage.get("thoughtsTokenCount", 0))
+        logger.info(
+            "GEMINICOST %s model=%s in=%d out=%d think=%d usd=%.5f",
+            ticker or "-", model, in_tok, out_tok, think_tok,
+            _gemini_cost_usd(in_tok, out_tok, think_tok),
+        )
+    except Exception:
+        logger.debug("GEMINICOST logging failed", exc_info=True)
+
+    # With thinking on, skip any thought part and return the first answer text.
+    parts = data["candidates"][0]["content"]["parts"]
+    for part in parts:
+        if part.get("text") and not part.get("thought"):
+            return part["text"]
+    return parts[0].get("text", "")

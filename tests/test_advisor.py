@@ -2,7 +2,26 @@
 
 import pytest
 
-from watchy.advisor import _effective_key, _format_analysis, _parse_advice
+from watchy.advisor import (
+    _analyst_summary_tail,
+    _effective_key,
+    _format_analysis,
+    _gemini_cost_usd,
+    _parse_advice,
+)
+
+
+class TestGeminiCost:
+    def test_input_priced(self):
+        assert abs(_gemini_cost_usd(1_000_000, 0, 0) - 1.50) < 1e-9
+
+    def test_thinking_billed_as_output(self):
+        # thinking tokens cost the same as visible output tokens
+        assert _gemini_cost_usd(0, 0, 1_000_000) == _gemini_cost_usd(0, 1_000_000, 0)
+        assert abs(_gemini_cost_usd(0, 0, 1_000_000) - 9.00) < 1e-9
+
+    def test_zero(self):
+        assert _gemini_cost_usd(0, 0, 0) == 0.0
 from watchy.config import LLMConfig
 
 
@@ -112,18 +131,55 @@ detail"""
         assert parsed["detail"] == raw
 
 
+class TestAnalystSummaryTail:
+    def test_returns_table_plus_trailing_conclusion(self):
+        report = (
+            "Long prose body about the stock.\n\nMore prose.\n\n"
+            "| Signal | Direction |\n|---|---|\n| RSI | Bullish |\n\n"
+            "FINAL TRANSACTION PROPOSAL: **BUY**\nReasoning: momentum holds.\n"
+        )
+        tail = _analyst_summary_tail(report)
+        assert tail is not None
+        assert "| Signal | Direction |" in tail          # the table
+        assert "FINAL TRANSACTION PROPOSAL: **BUY**" in tail  # the conclusion after it
+        assert "Reasoning: momentum holds." in tail
+        assert "Long prose body" not in tail             # the prose before it is dropped
+
+    def test_none_without_table(self):
+        assert _analyst_summary_tail("Just prose, no table here.") is None
+
+    def test_anchors_on_last_table(self):
+        report = "| a | b |\n|---|---|\n\nmid\n\n| c | d |\n|---|---|\n| e | f |\n\nDONE\n"
+        tail = _analyst_summary_tail(report)
+        assert "| c | d |" in tail and "DONE" in tail
+        assert "| a | b |" not in tail and "mid" not in tail
+
+
 class TestFormatAnalysis:
-    def test_full_reports_preferred(self):
+    def test_feeds_summary_tail_not_full_prose(self):
         result = {
             "_reports": {
-                "market_report": "Market analysis full text.",
-                "sentiment_report": "Sentiment analysis full text.",
+                "market_report": (
+                    "LONG PROSE that must not be fed to the advisor. " * 20
+                    + "\n\n| Metric | Value |\n|---|---|\n| Trend | Up |\n\n"
+                    + "FINAL ASSESSMENT: accumulate.\n"
+                ),
             },
-            "recommendations": ["truncated market...", "truncated sentiment..."],
         }
         text = _format_analysis(result)
-        assert "Market analysis full text" in text
-        assert "Sentiment analysis full text" in text
+        assert "| Trend | Up |" in text              # the summary table is fed
+        assert "FINAL ASSESSMENT: accumulate." in text  # its trailing conclusion too
+        assert "LONG PROSE" not in text              # the prose before the table is not
+
+    def test_report_without_table_falls_back_to_head(self):
+        result = {"_reports": {"news_report": "Headline-only note, no table."}}
+        text = _format_analysis(result)
+        assert "Headline-only note" in text
+
+    def test_includes_trader_plan(self):
+        result = {"trader_plan": "**Action**: Buy\n**Entry Price**: 180"}
+        text = _format_analysis(result)
+        assert "Entry Price" in text and "180" in text
 
     def test_falls_back_to_recommendations(self):
         result = {
