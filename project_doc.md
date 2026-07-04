@@ -2,7 +2,7 @@
 
 ## Overview
 
-Watchy is a long-running Python daemon that monitors a configurable list of stock tickers using a two-tier scheduling architecture. It sits on top of the [TradingAgents](https://github.com/anthropics/TradingAgents) multi-agent LLM trading framework, acting as a cost-efficient pre-filter: Tier 1 runs cheap technical indicator scans hourly and only invokes LLM-based analysis when a signal breaches; Tier 2 runs a full-depth analysis once daily regardless of signals.
+Watchy is a long-running Python daemon that monitors a configurable list of stock tickers using a two-tier scheduling architecture. It sits on top of the [TradingAgents](https://github.com/TauricResearch/TradingAgents) multi-agent LLM trading framework, acting as a cost-efficient pre-filter: Tier 1 runs cheap technical indicator scans hourly and only invokes LLM-based analysis when a signal breaches; Tier 2 runs a full-depth analysis once daily regardless of signals.
 
 **Tech stack:** Python 3.11+, APScheduler, yfinance, pandas, SQLite, Telegram Bot API.
 

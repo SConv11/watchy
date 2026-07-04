@@ -6,7 +6,7 @@
 
 > 🌐 Chinese version: [README.zh.md](README.zh.md)
 
-A stock-monitoring daemon built on the [TradingAgents](https://github.com/anthropics/TradingAgents)
+A stock-monitoring daemon built on the [TradingAgents](https://github.com/TauricResearch/TradingAgents)
 multi-agent LLM trading framework. Watchy watches your watchlist for you — an
 hourly zero-cost technical indicator scan, a daily full-depth analysis, and
 position-aware advice pushed to Telegram.
