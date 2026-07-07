@@ -10,10 +10,12 @@ fetch a scan already does (no extra API call):
     (scripts/schwab_oauth.py) to stamp when the 7-day clock started.
   * monitor_schwab(source) — inspect the snapshot a scan just resolved: if it
     isn't live (token expired / API down → serving cache/manual), alert that
-    re-auth is needed; if it is live but the recorded auth is within ~1 day of the
-    7-day limit, warn to re-auth soon. Called once per Tier 2 batch (on the shared
+    re-auth is needed; if it is live but the recorded auth nears the 7-day limit,
+    warn to re-auth soon; and on Fridays, nudge a proactive re-auth so the 7-day
+    clock re-anchors before the weekend (otherwise an expiry can land mid-weekend
+    and sit unattended for days). Called once per Tier 2 batch (on the shared
     source) and on each Tier 1 fired-signal scan. Deduped to one re-auth alert per
-    day and one expiry warning per auth cycle.
+    day, one expiry warning per auth cycle, and one Friday reminder per UTC Friday.
 """
 
 from __future__ import annotations
@@ -23,15 +25,22 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Schwab refresh tokens are valid 7 days. Warn in two escalating stages — once when
-# ≤2 days are left, then again when ≤1 day is left — so a missed first nudge gets a
-# second, more urgent one before the token actually lapses.
+# Schwab refresh tokens are valid 7 days. Warn in escalating stages — ≤3 days left,
+# then ≤2, then ≤1 — so a missed first nudge gets a more urgent follow-up before the
+# token lapses. The ≤3-day stage gives enough lead time to survive a multi-day
+# weekend gap where the VPS can't be touched.
 REFRESH_TOKEN_TTL_DAYS = 7
-EXPIRY_WARN_DAYS_LEFT = (2, 1)  # days-left thresholds, least → most urgent
+EXPIRY_WARN_DAYS_LEFT = (3, 2, 1)  # days-left thresholds, least → most urgent
 
 KV_AUTH_AT = "schwab_auth_at"                       # ISO time of the last successful OAuth
 KV_REAUTH_ALERT_DATE = "schwab_reauth_alert_date"   # UTC date of last "re-auth needed" alert
 KV_EXPIRY_WARNED_AT = "schwab_expiry_warned_at"     # "{auth_at}|{tier}" last warned this cycle
+KV_FRIDAY_REMINDER_DATE = "schwab_friday_reminder_date"  # UTC date of last Friday reminder
+
+
+def _utcnow() -> datetime:
+    """Indirection over the wall clock so tests can freeze 'now' (weekday + age)."""
+    return datetime.now(timezone.utc)
 
 
 def record_auth_success(store) -> None:
@@ -39,7 +48,7 @@ def record_auth_success(store) -> None:
 
     Also clears the per-cycle expiry-warning marker so the next cycle can warn again.
     """
-    store.set_kv(KV_AUTH_AT, datetime.now(timezone.utc).isoformat())
+    store.set_kv(KV_AUTH_AT, _utcnow().isoformat())
     store.set_kv(KV_EXPIRY_WARNED_AT, "")
 
 
@@ -57,11 +66,12 @@ def monitor_schwab(config, store, notifier, position_source) -> None:
         logger.info("Schwab enabled but scan used non-live positions (%s) — alerting", prov)
         _alert_reauth(store, notifier)
         return
+    _maybe_remind_friday(store, notifier)
     _maybe_warn_expiry(store, notifier)
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return _utcnow().date().isoformat()
 
 
 def _alert_reauth(store, notifier) -> None:
@@ -77,6 +87,28 @@ def _alert_reauth(store, notifier) -> None:
         "<b>Fix:</b> run <code>scripts/schwab_oauth.py --force</code> on the VPS."
     )
     store.set_kv(KV_REAUTH_ALERT_DATE, _today())
+
+
+def _maybe_remind_friday(store, notifier) -> None:
+    """On Fridays, nudge a proactive re-auth so the 7-day clock re-anchors before the
+    weekend — otherwise expiry can drift into a multi-day gap where the VPS can't be
+    touched. Sent at most once per UTC Friday, only while the token is still live
+    (a dead token already triggers the louder re-auth alert)."""
+    now = _utcnow()
+    if now.weekday() != 4:  # Mon=0 … Fri=4
+        return
+    today = now.date().isoformat()
+    if store.get_kv(KV_FRIDAY_REMINDER_DATE) == today:
+        return
+    notifier.send(
+        "🗓️🗓️🗓️🗓️🗓️🗓️🗓️🗓️🗓️🗓️\n"
+        "<b>🔑 SCHWAB — FRIDAY RE-AUTH</b>\n"
+        "🗓️🗓️🗓️🗓️🗓️🗓️🗓️🗓️🗓️🗓️\n"
+        "Re-auth now to re-anchor the 7-day token before the weekend, so it never "
+        "lapses during a multi-day gap when you can't reach the VPS.\n"
+        "<b>Run:</b> <code>scripts/schwab_oauth.py --force</code> on the VPS."
+    )
+    store.set_kv(KV_FRIDAY_REMINDER_DATE, today)
 
 
 def _maybe_warn_expiry(store, notifier) -> None:
@@ -95,7 +127,7 @@ def _maybe_warn_expiry(store, notifier) -> None:
         logger.warning("Unparseable %s: %r", KV_AUTH_AT, auth_at_raw)
         return
 
-    age_days = (datetime.now(timezone.utc) - auth_at).total_seconds() / 86400
+    age_days = (_utcnow() - auth_at).total_seconds() / 86400
     remaining = REFRESH_TOKEN_TTL_DAYS - age_days
 
     # Most urgent (smallest) days-left threshold we've crossed; None if still far off.
@@ -115,8 +147,9 @@ def _maybe_warn_expiry(store, notifier) -> None:
 
 def _expiry_message(age_days: float, remaining: float, tier: int) -> str:
     """Build a deliberately loud, bordered alert that stands out from position advice."""
-    border = "🔴" * 10 if tier <= 1 else "🟠" * 10
-    when = "EXPIRES IN ~1 DAY" if tier <= 1 else "EXPIRES IN ~2 DAYS"
+    color = "🔴" if tier <= 1 else ("🟠" if tier == 2 else "🟡")
+    border = color * 10
+    when = f"EXPIRES IN ~{tier} DAY{'' if tier == 1 else 'S'}"
     return (
         f"{border}\n"
         f"<b>🔑 SCHWAB TOKEN — {when}</b>\n"

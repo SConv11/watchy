@@ -128,11 +128,15 @@ refresh:**
 > **Token-expiry alerts (no more silent staleness):** each Tier 2 batch (and each
 > Tier 1 fired-signal scan) inspects the position snapshot it just resolved and pushes
 > a Telegram alert when the refresh token has **already lapsed** (re-auth needed — the
-> scan is on cached/manual data) or is **expiring soon** (within ~1 day of the 7-day
-> limit). No extra API call — it reads the fetch the scan already did. Alerts are
-> deduped to at most one re-auth nag per day. The 7-day clock is stamped by
-> `scripts/schwab_oauth.py` on a successful auth, so re-auth via that script keeps the
-> warnings accurate.
+> scan is on cached/manual data) or is **expiring soon** — three escalating stages at
+> **≤3, ≤2, and ≤1 days left** (the ≤3-day stage buys enough lead time to survive a
+> multi-day weekend gap when the VPS can't be touched). It also sends a **Friday
+> reminder** to re-auth proactively, so the 7-day clock re-anchors before the weekend
+> and never lapses mid-gap. No extra API call — it reads the fetch the scan already
+> did. Alerts are deduped to at most one re-auth nag per day, one expiry warning per
+> stage per auth cycle, and one Friday reminder per Friday. The 7-day clock is stamped
+> by `scripts/schwab_oauth.py` on a successful auth, so re-auth via that script keeps
+> the warnings accurate.
 
 ## Quick Start
 

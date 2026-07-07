@@ -103,9 +103,13 @@ Details in repo `CLAUDE.md` — summary:
 - **Position fetch shared per Tier 2 batch** (one source → all tickers, was 17 redundant calls);
   Tier 1 fetches before the pipeline. Fallback unchanged (live → cache → manual file).
 - **Token-expiry alerts** (`watchy/schwab_health.py` `monitor_schwab`): the 7-day refresh token
-  expiring is no longer silent — Telegram alert on "re-auth needed" plus a **two-stage expiry
-  warning (≤2 days left, then ≤1 day left)** with a **loud bordered format** (🔴/🟠/🚨 + caps)
-  so it stands out from position advice. Each stage once per auth cycle, escalating.
+  expiring is no longer silent — Telegram alert on "re-auth needed" plus a **three-stage expiry
+  warning (≤3, ≤2, ≤1 days left)** with a **loud bordered format** (🔴/🟠/🟡/🚨 + caps) so it
+  stands out from position advice. Each stage once per auth cycle, escalating. **≤3-day stage added
+  2026-07-07** (`EXPIRY_WARN_DAYS_LEFT=(3,2,1)`) for lead time over multi-day weekend gaps. Same
+  change added a **Friday reminder** (`_maybe_remind_friday`, live-path only, deduped per UTC Friday,
+  kv `schwab_friday_reminder_date`): habit = run `--force` every Friday so the 7-day clock re-anchors
+  before the weekend and expiry never lands mid-gap. Clock reads go through `sh._utcnow()` (test seam).
 - **OPS: re-auth every ≤7 days** on the VPS with the trading-pyenv python:
   **`scripts/schwab_oauth.py --force`** — MUST use `--force` to get a new 7-day token (it stashes
   the token db → full browser OAuth → restamps clock; restores `.bak` on failure). A plain run
