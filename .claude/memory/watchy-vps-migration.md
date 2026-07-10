@@ -7,6 +7,8 @@ metadata:
   originSessionId: d502b99b-6e92-47d6-acaf-29cde30823cf
 ---
 
+- **🆕 2026-07-11 别被 systemd 的内存数吓到（实测厘清）**：`systemctl status watchy` 报的 `Memory` 是**整个 cgroup 求和**，稳态 ≈ **700–720 MB** = 主 daemon(~550 MB) + **一个常驻子 worker 进程**(~150 MB)。子 worker 是主进程 fork 的（`pstree -p <MainPID>` 里挂在主进程下、`ps -o ppid` 显示 PPID=主 daemon），**不是孤儿/泄漏，正常，别去 kill 或重启回收**。单看主进程 RSS 仍是 ~460–550 MB 基线。本条以下所有「稳态常驻 ~460–510MB」指的都是**单主进程 RSS**，不是 systemd cgroup 数——多租户余量测算按 cgroup ~700 MB 起算才准。当时 `free -m`：available 1 GB、swap 只用 39 MB，健康无压力。判 systemd 数值异常前先 `ps -o pid,ppid,rss --ppid <MainPID>` 拆父子进程。
+
 - **🏁 2026-06-24 迁移正式结案。** 新机(qcvps)已**跑通至少一次完整 Tier-2 批次,Schwab/LLM/Telegram 全链路 OK**(用户确认)→ decommission gate 满足。**老机(Hetzner)已 `server delete`**;Hetzner Cloud 按小时计费、删实例即停止扣费,无预付年费要退 → 彻底退租完成。Watchy 现单机运行在搬瓦工 LA `qcvps`(`65.49.218.116`,Ubuntu 24.04,3 vCPU/2GB/2GB swap)。下方为迁移过程历史记录,保留备查;遗留待办见本条末尾。
   - **剩余待办(非阻塞,环境增强)**：~~① Cloudflare Tunnel SSH~~ **✅ 2026-06-29 完成**：tunnel `qcvps-ssh` → `fps.cong.fyi`(zone cong.fyi)，过机场全程可连，8022 hack 退役；另加 fail2ban；未上 Access(免费版要 billing，风险可接受)。细节见 [[ssh-airport-port-block]]。~~② VPS 上装 Claude Code~~ **✅ 已弄(2026-06-29 用户确认)**。~~④ Schwab token 重新 OAuth~~ **✅ 已弄(2026-06-29 用户确认)**——注意这是 ≤7 天周期运维不是一次性，照常 `scripts/schwab_oauth.py --force`。③ 多租户栈 Docker+CouchDB(Obsidian LiveSync)+cloudflared —— **用户 2026-06-29 说「之后再说，可能这个 task 就删掉了」→ 搁置/可能不做**；真上的话 2GB 机叠 Watchy 稳态常驻 ~460–510MB 余量偏紧要盯 swap，且 cloudflared 已就位(SSH tunnel)可复用加 ingress。
 
