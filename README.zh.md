@@ -114,7 +114,7 @@ sudo systemctl enable --now watchy-update.timer
 > ⚠️ 上面的 sudoers drop-in 是**必需的**。`auto-update.sh` 以 `User=watchy` 运行，而
 > `systemctl restart watchy` 需要 root —— 缺了它，`git pull` 会成功但重启**静默失败**，
 > daemon 会一直跑旧代码（2026-06-14 踩过这个坑）。
-> 副作用：每次 push 都会触发重启，**勿在 Tier-2 窗口（~11:30–13:00 UTC）push**，否则打断批次。
+> 副作用：每次 push 都会触发重启，**勿在 Tier-2 窗口（~10:30–12:00 UTC）push**，否则打断批次。
 
 ## 配置（Configuration）
 

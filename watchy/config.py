@@ -14,7 +14,7 @@ import yaml
 class TickerConfig:
     ticker: str
     tier1_interval_h: float = 0.5
-    tier2_time_utc: str = "11:30"
+    tier2_time_utc: str = "10:30"
     # Optional manual entry/accumulation target. Used by the Tier 2 proximity
     # gate (#15) as the effective target when set (else the #16 auto-derived one).
     # Tier 1 is never proximity-gated.

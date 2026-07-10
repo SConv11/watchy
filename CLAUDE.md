@@ -29,15 +29,16 @@ Backlog #1–#18 essentially done; system deployed on the VPS and validated. Det
   port 22; Cloudflare Tunnel SSH still a TODO.)
 
 ⚠️ The auto-update timer restarts the daemon on every push — **don't push during the Tier-2 window
-(~11:30–13:00 UTC)** or you interrupt the batch.
+(~10:30–12:00 UTC)** or you interrupt the batch.
 
 ## Architecture / ops ground truth
 
 - Daemon runs under systemd (`watchy.service`) as user `watchy`, env = `trading` pyenv
   (`/home/watchy/.pyenv/versions/3.11.9/envs/trading/bin/python`). Run repo scripts with THAT python
   (the bare `python` shim lacks `yfinance_cache`).
-- Tier 1: every 30 min/ticker (jitter ±5 min, market-hours gated, event-driven). Tier 2: daily 11:30 UTC
-  (Sat skipped; Sunday runs the 3-way risk debate, weekdays run 4 analysts).
+- Tier 1: every 30 min/ticker (jitter ±5 min, market-hours gated, event-driven). Tier 2: daily 10:30 UTC
+  (Sat skipped; Sunday runs the 3-way risk debate, weekdays run 4 analysts). 10:30 keeps the batch off
+  DeepSeek's peak-pricing windows (06:00–10:00 & 01:00–04:00 UTC = Beijing 14:00–18:00 & 09:00–12:00).
 - Config: `config.yaml` (committed, non-secret). Secrets: `~/watchy_config/secrets.yaml` (off-repo, never
   committed). Under systemd the daemon reads `~/watchy/config.yaml` (the repo copy — the unit does NOT set
   `WATCHY_CONFIG`), so the live watchlist can differ from origin/main; check before relying on it.
