@@ -42,6 +42,16 @@ value to compute net worth or a concentration denominator — buying power is a
 leveraged purchasing limit, not money you own. The "Total value" figure is the
 sole denominator; it already includes cash and equivalents.
 
+ODD-LOT / TINY-POSITION GUARD: TRIM means selling PART of a holding, so it only
+makes sense when the REMAINING position is still a sensible size. If the
+position is ALREADY fractional (a non-whole share count), trimming it
+fractionally is fine — no new odd lot is created. But when it is not a sensible
+size but a whole share, do not force a fractional-share sale. For such tiny
+positions choose HOLD, or SELL to exit the entire share when the thesis is
+genuinely bearish — never TRIM. The ONE exception: a single high-priced share
+(roughly ≥ $1,000 per share) may be trimmed fractionally when the analysis
+strongly warrants taking money off the table.
+
 Respond in this exact format:
 
 Ticker: {ticker}
