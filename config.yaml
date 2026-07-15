@@ -7,6 +7,8 @@
 #   # then edit secrets.yaml with your real keys
 
 watchlist:
+  - "SKHY"
+  - "MU"
   - "COHR"
   - "AMZN"
   - "GOOG"
@@ -23,7 +25,6 @@ watchlist:
   - "LUMN"
   - "ASML"
   - "MOD"
-  - "SKHY"
 
   # - "AAPL"
   # - "KLAC"
