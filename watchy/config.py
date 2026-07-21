@@ -68,11 +68,12 @@ class LLMConfig:
     api_base: str | None = None
     deepseek_api_key: str = ""
     # Gemini advisor thinking level per tier (only used when provider == "gemini").
-    # gemini-3.x controls thinking with thinkingConfig.thinkingLevel; "off" uses the
-    # legacy thinkingBudget=0 to force zero thoughts. Valid: off / minimal / low /
+    # gemini-3.6-flash controls thinking with thinkingConfig.thinkingLevel and
+    # rejects the legacy thinkingBudget (HTTP 400), so "off" maps to minimal (the
+    # cheapest tier; observed ~0 thinking tokens). Valid: off / minimal / low /
     # medium / high. Tier 1 advice rides frequent intraday signals → keep it cheap
     # (off); Tier 2 is the daily read → low (measured: ~$0.016/call for the extra
-    # reasoning at gemini-3.5-flash's $9/1M, decision unchanged but richer detail).
+    # reasoning at gemini-3.6-flash's $7.50/1M, decision unchanged but richer detail).
     gemini_thinking_tier1: str = "off"
     gemini_thinking_tier2: str = "low"
 

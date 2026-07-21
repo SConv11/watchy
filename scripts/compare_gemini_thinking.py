@@ -8,12 +8,12 @@ the SAME prompt production would build (ADVISOR_PROMPT + _format_analysis digest
 position/portfolio). You get token usage (prompt / candidates / **thoughts**),
 cost, and the advice text per level — for a handful of Gemini calls, no DeepSeek.
 
-gemini-3.5-flash controls thinking with ``thinkingConfig.thinkingLevel``
-(minimal / low / medium / high; default medium); 3.x dropped ``thinkingBudget``.
-The "off" cell uses the legacy ``thinkingBudget: 0`` (still honoured to force
-thoughts to 0). maxOutputTokens is set generously so thinking can't truncate the
-answer. Each level runs in its own try/except so an unsupported field on one
-cell doesn't abort the sweep.
+gemini-3.6-flash controls thinking with ``thinkingConfig.thinkingLevel``
+(minimal / low / medium / high; default medium) and REJECTS the legacy
+``thinkingBudget`` with HTTP 400. The "off" cell therefore maps to minimal (the
+cheapest tier; observed ~0 thinking tokens). maxOutputTokens is set generously so
+thinking can't truncate the answer. Each level runs in its own try/except so an
+unsupported field on one cell doesn't abort the sweep.
 
 MANUAL / needs the Gemini api_key in secrets.yaml. Run with the `trading` pyenv.
 
@@ -99,14 +99,16 @@ def result_from_report(sec: dict[str, str]) -> dict:
 
 
 def _thinking_config(level: str) -> dict:
-    """Map a level label to the generateContent thinkingConfig for gemini-3.x."""
-    if level == "off":
-        return {"thinkingBudget": 0}          # legacy off-switch, thoughts -> 0
-    return {"thinkingLevel": level}           # minimal / low / medium / high
+    """Map a level label to the generateContent thinkingConfig for gemini-3.x.
+
+    Mirrors advisor._gemini_thinking_config: 3.6 rejects the legacy
+    ``thinkingBudget`` (HTTP 400), so "off" maps to the cheapest tier, minimal.
+    """
+    return {"thinkingLevel": "minimal" if level == "off" else level}  # minimal/low/medium/high
 
 
 def call_gemini(prompt: str, llm, level: str) -> tuple[str, dict]:
-    model = llm.model or "gemini-3.5-flash"
+    model = llm.model or "gemini-3.6-flash"
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
            f":generateContent?key={_effective_key(llm)}")
     body = json.dumps({

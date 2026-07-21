@@ -13,8 +13,9 @@ from watchy.advisor import (
 
 
 class TestGeminiThinkingConfig:
-    def test_off_uses_legacy_budget_zero(self):
-        assert _gemini_thinking_config("off") == {"thinkingBudget": 0}
+    def test_off_maps_to_minimal(self):
+        # 3.6 rejects the legacy thinkingBudget (HTTP 400), so "off" -> minimal
+        assert _gemini_thinking_config("off") == {"thinkingLevel": "minimal"}
 
     def test_levels_use_thinking_level(self):
         assert _gemini_thinking_config("low") == {"thinkingLevel": "low"}
@@ -28,7 +29,7 @@ class TestGeminiCost:
     def test_thinking_billed_as_output(self):
         # thinking tokens cost the same as visible output tokens
         assert _gemini_cost_usd(0, 0, 1_000_000) == _gemini_cost_usd(0, 1_000_000, 0)
-        assert abs(_gemini_cost_usd(0, 0, 1_000_000) - 9.00) < 1e-9
+        assert abs(_gemini_cost_usd(0, 0, 1_000_000) - 7.50) < 1e-9
 
     def test_zero(self):
         assert _gemini_cost_usd(0, 0, 0) == 0.0

@@ -318,11 +318,11 @@ _ADVICE_MAX_TOKENS = 1024
 # tokens share maxOutputTokens, so the visible answer needs its own room on top.
 _GEMINI_THINK_HEADROOM = 2048
 
-# gemini-3.5-flash prices, USD per 1M tokens (update from ai.google.dev/pricing).
+# gemini-3.6-flash prices, USD per 1M tokens (update from ai.google.dev/pricing).
 # Thinking tokens are billed at the output rate. Used only for the greppable
 # GEMINICOST log estimate — the token counts logged are exact.
 _GEMINI_PRICE_IN = 1.50
-_GEMINI_PRICE_OUT = 9.00
+_GEMINI_PRICE_OUT = 7.50
 
 
 def _gemini_cost_usd(in_tok: int, out_tok: int, think_tok: int) -> float:
@@ -402,10 +402,12 @@ def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
 def _gemini_thinking_config(level: str) -> dict:
     """Map a thinking level to the gemini-3.x generateContent thinkingConfig.
 
-    gemini-3.x uses ``thinkingLevel`` (minimal/low/medium/high); "off" falls back
-    to the legacy ``thinkingBudget: 0`` which still forces thoughts to zero.
+    gemini-3.6-flash uses ``thinkingLevel`` (minimal/low/medium/high; default
+    medium) and REJECTS the legacy ``thinkingBudget`` with HTTP 400 (verified on
+    3.6, 2026-07-21). Thinking can't be fully switched off, so "off" maps to the
+    cheapest tier, ``minimal`` — which in practice still emits ~0 thinking tokens.
     """
-    return {"thinkingBudget": 0} if level == "off" else {"thinkingLevel": level}
+    return {"thinkingLevel": "minimal" if level == "off" else level}
 
 
 def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "", level: str = "off") -> str:
@@ -416,12 +418,13 @@ def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "", level: str = "of
     """
     import urllib.request
 
-    model = llm.model or "gemini-3.5-flash"
+    model = llm.model or "gemini-3.6-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_effective_key(llm)}"
 
-    # Thinking tokens share the output budget, so when thinking is on give the
-    # visible answer its own headroom on top of the thinking allowance.
-    max_out = _ADVICE_MAX_TOKENS if level == "off" else _ADVICE_MAX_TOKENS + _GEMINI_THINK_HEADROOM
+    # Thinking tokens share the output budget. On 3.6 every level (including "off"
+    # → minimal) can emit thoughts, so always give the visible answer its own
+    # headroom. maxOutputTokens is a ceiling, not a charge, so this is free.
+    max_out = _ADVICE_MAX_TOKENS + _GEMINI_THINK_HEADROOM
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
