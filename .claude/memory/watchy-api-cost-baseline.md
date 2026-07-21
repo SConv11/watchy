@@ -16,7 +16,7 @@ metadata:
   - deep_think_llm = `deepseek-v4-pro`（Research Manager / PM）
   - quick_think_llm = `deepseek-v4-flash`（analysts / debaters / trader）
   - 调度：每日 `11:30 UTC` 跑一次（周六跳过）
-- **Advisor（持仓建议合成，`watchy/advisor.py`）**：provider=Gemini，model=`gemini-3.6-flash`（2026-07-21 从 3.5-flash 升级；官方端点已上线，定价 in $1.50 / **out $7.50**/1M，比 3.5 的 out $9.00 便宜 ~17%；`advisor.py` 定价常量 `_GEMINI_PRICE_OUT` 已改 7.50）。⚠️ repo 默认已改 3.6，但 **VPS `~/watchy_config/secrets.yaml` 的 `llm.model` 需手动改成 `gemini-3.6-flash`** 才真正生效。⚠️ **3.6 直接拒绝 `thinkingBudget`（HTTP 400，2026-07-21 用 compare_gemini_thinking.py 打 SKHY 实测：`off`→400、`minimal`→200 且 think=0 $0.00928）**。故 advisor 的 `off` 档已改成映射 `thinkingLevel:minimal`（最省档，实测思考 token≈0，功能等价于旧的"关"），否则线上切 3.6 后 Tier 1 每次 400、advisor 彻底跑不出。`_call_gemini` 的 maxOutputTokens 也改成恒加 headroom（off 现在也走 minimal 会产生思考 token）。compare 脚本的 `_thinking_config` 同步改。合法 thinkingLevel 仅 minimal/low/medium（默认）/high，3.6 无法完全关思考
+- **Advisor（持仓建议合成，`watchy/advisor.py`）**：provider=Gemini，model=`gemini-3.5-flash`（VPS 实跑用的是 3.5-flash，确认于 2026-06-10；`secrets.example.yaml` 里的 2.5-flash 只是示例值）
 
 ## 成本基线（2026-06-09，单交易日）
 **CNY 和 USD 分开记，不换算混算：**
