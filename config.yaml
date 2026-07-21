@@ -7,13 +7,15 @@
 #   # then edit secrets.yaml with your real keys
 
 watchlist:
+  - "SKHY"
+  - "MU"
   - "COHR"
   - "AMZN"
   - "GOOG"
   - "AVGO"
   - "NVDA"
-  - "ANET"
-  - "CARR"
+  # - "ANET"
+  # - "CARR"
   - "EMR"
   - "NVT"
   - "VST"
@@ -22,19 +24,19 @@ watchlist:
   - "LRCX"
   - "LUMN"
   - "ASML"
-  - "MOD"
-  - "SKHY"
-
+  # - "MOD"
+  
   # - "AAPL"
   # - "KLAC"
   # - "AMAT"
   # - "RMBS"
-  # - "APH"
+  - "APH"
   # - "HUBB"
   # - "TSLA"
   # - "SOXX"
   # - "SMCI"
-  # - "CEG"
+  - "CEG"
+  - "TSM"
 
   
   # Short form uses defaults: scan every 30min, daily at 10:30 UTC.
