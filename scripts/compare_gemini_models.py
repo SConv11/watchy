@@ -1,31 +1,43 @@
 #!/usr/bin/env python
 """Compare the Gemini advisor across MODELS — 3.6 vs 3.5 — WITHOUT re-running the
-(expensive) TradingAgents pipeline, and WITHOUT re-billing the 3.6 side (issue #18,
-the dropped model bake-off, re-scoped to the one upgrade we actually shipped:
-gemini-3.5-flash → gemini-3.6-flash, commit 4bc1e8c).
+(expensive) TradingAgents pipeline (issue #18, the dropped model bake-off,
+re-scoped to the upgrade we actually shipped: gemini-3.5-flash → gemini-3.6-flash,
+commit 4bc1e8c).
 
-The advisor only consumes the analysis *result*, so this reconstructs the exact
+The advisor only consumes the analysis *result*, so this reconstructs the
 production prompt from a saved ``~/watchy/reports/*.md`` (ADVISOR_PROMPT +
-_format_analysis digest + position/portfolio) and calls ONE new model — the OLD
-one (gemini-3.5-flash by default). The 3.6 side is NOT called: the advisor's
-output isn't persisted (it only goes to Telegram), so you paste the 3.6 advice you
-already received into ``--ref-file`` (or stdin). Net Gemini spend = a single 3.5
-call per ticker.
+_format_analysis digest + position/portfolio) and calls the models on the SAME
+prompt — one live position snapshot shared by both cells, so the only variable is
+the model.
 
-⚠️ Fidelity: the pasted 3.6 text must correspond to the SAME report you compare
-against, or the two cells saw different prompts. Pick the report from the same
-run that produced the Telegram advice (``--ticker`` picks the newest; override
-with ``--report``). The Telegram layout drops the ``Target:`` line (it's consumed
-for the #16 derived target, not displayed), so the 3.6 side shows target=N/A.
+Two modes:
+
+  * BOTH FRESH (default): calls both the new model (gemini-3.6-flash) and the old
+    model (gemini-3.5-flash) live. Cleanest A/B — identical prompt + position
+    snapshot, only the model differs.
+  * REUSE 3.6 (``--ref-file`` / stdin): paste the 3.6 Telegram advice you already
+    received and only the 3.5 cell is billed. Handy to avoid a second 3.6 call, but
+    the Telegram layout drops the ``Target:`` line (consumed for the #16 derived
+    target), so the reused 3.6 cell shows target=N/A, and the pasted text MUST come
+    from the same run as ``--report``.
+
+Fidelity: the digest maps the report's "### Portfolio Manager" section (the
+risk-debate judge_decision) to ``risk_assessment`` exactly as production does. The
+one field the .md can't restore is the graph's short ``final_trade_decision``
+(production's ``_decision_raw`` / the "Final Decision" block), so it's left empty —
+identically for BOTH cells, so the model-vs-model comparison stays controlled even
+though neither cell reproduces the live Tier 2 decision bit-for-bit.
 
 MANUAL / needs the Gemini api_key in secrets.yaml. Run with the `trading` pyenv.
 
-    # paste the 3.6 Telegram advice into a file first, then:
-    python scripts/compare_gemini_models.py --ticker MOD --ref-file /tmp/mod_36.txt
-    # or pipe it in:
-    python scripts/compare_gemini_models.py --ticker MOD < /tmp/mod_36.txt
-    # run the 3.5 cell at a specific thinking level (default: tier2 = low):
-    python scripts/compare_gemini_models.py --ticker MOD --ref-file f.txt --level low
+    # both fresh (recommended):
+    python scripts/compare_gemini_models.py --ticker AVGO
+    python scripts/compare_gemini_models.py --ticker AVGO --level low
+    python scripts/compare_gemini_models.py --ticker AVGO \
+        --new-model gemini-3.6-flash --old-model gemini-3.5-flash
+
+    # reuse a pasted 3.6 Telegram advice (only 3.5 billed):
+    python scripts/compare_gemini_models.py --ticker AVGO --ref-file /tmp/avgo_36.txt
 """
 
 from __future__ import annotations
@@ -46,7 +58,6 @@ from watchy.advisor import (
     ADVISOR_PROMPT,
     _effective_key,
     _format_analysis,
-    _gemini_cost_usd,
     _parse_advice,
 )
 from watchy.config import load_config
@@ -67,13 +78,13 @@ _AGENTS = {
 _DIVIDER_RE = re.compile(r"^##\s+[IVXLC]+\.\s")
 _ADVICE_MAX_TOKENS = 4096  # generous so thinking can't truncate the visible answer
 
-# The old model this A/B validates the upgrade against. 3.6 uses thinkingLevel
-# and rejects the legacy thinkingBudget; 3.5-flash accepts thinkingLevel too.
+_DEFAULT_NEW_MODEL = "gemini-3.6-flash"
 _DEFAULT_OLD_MODEL = "gemini-3.5-flash"
-# gemini-3.5-flash prices, USD per 1M tokens. Same list price as 3.6-flash as of
+# gemini-flash list price, USD per 1M tokens. 3.5 and 3.6-flash share it as of
 # 2026-07 (in $1.50 / out $7.50); update from ai.google.dev/pricing if it drifts.
-_OLD_PRICE_IN = 1.50
-_OLD_PRICE_OUT = 7.50
+# Thinking tokens are billed at the output rate.
+_PRICE_IN = 1.50
+_PRICE_OUT = 7.50
 
 _DECISIONS = ("BUY", "SELL", "TRIM", "ADD", "HOLD")
 
@@ -103,6 +114,14 @@ def parse_report(text: str) -> dict[str, str]:
 
 
 def result_from_report(sec: dict[str, str]) -> dict:
+    # Map report sections to the SAME result fields production's pipeline_runner
+    # builds, so _format_analysis produces the same labelled digest the live
+    # advisor sees. The report's "### Portfolio Manager" section is the
+    # risk-debate judge_decision, which production carries in `risk_assessment`
+    # (labelled "Risk Assessment") — NOT in `_decision_raw`. `_decision_raw` (the
+    # graph's short final_trade_decision) isn't persisted to the .md, so it's left
+    # empty. Feeding the PM call under the wrong "Final Decision" label with no
+    # Risk Assessment block previously flipped the advisor's decision.
     return {
         "_reports": {
             "market_report": sec.get("Market Analyst", ""),
@@ -111,7 +130,8 @@ def result_from_report(sec: dict[str, str]) -> dict:
             "fundamentals_report": sec.get("Fundamentals Analyst", ""),
         },
         "trader_plan": sec.get("Trader", ""),
-        "_decision_raw": sec.get("Portfolio Manager", ""),
+        "risk_assessment": sec.get("Portfolio Manager", ""),
+        "_decision_raw": "",
         "recommendations": [],
     }
 
@@ -140,6 +160,14 @@ def call_gemini(prompt: str, llm, model: str, level: str) -> tuple[str, dict]:
             text = part["text"]
             break
     return text, data.get("usageMetadata", {})
+
+
+def _cost(usage: dict) -> tuple[int, int, int, float]:
+    in_tok = int(usage.get("promptTokenCount", 0))
+    out_tok = int(usage.get("candidatesTokenCount", 0))
+    think_tok = int(usage.get("thoughtsTokenCount", 0))
+    usd = (in_tok * _PRICE_IN + (out_tok + think_tok) * _PRICE_OUT) / 1_000_000
+    return in_tok, out_tok, think_tok, usd
 
 
 def parse_telegram_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
@@ -182,12 +210,16 @@ def main() -> int:
     ap.add_argument("--ticker", default="", help="use the newest report for this ticker")
     ap.add_argument("--report", default="", help="explicit report .md path")
     ap.add_argument("--reports-dir", default="~/watchy/reports")
-    ap.add_argument("--ref-file", default="",
-                    help="file with the pasted 3.6 Telegram advice (default: read stdin)")
+    ap.add_argument("--new-model", default=_DEFAULT_NEW_MODEL,
+                    help=f"new model, called fresh unless a 3.6 reply is pasted "
+                         f"(default: {_DEFAULT_NEW_MODEL})")
     ap.add_argument("--old-model", default=_DEFAULT_OLD_MODEL,
-                    help=f"old model to compare against (default: {_DEFAULT_OLD_MODEL})")
+                    help=f"old model, always called fresh (default: {_DEFAULT_OLD_MODEL})")
+    ap.add_argument("--ref-file", default="",
+                    help="optional: file with a pasted 3.6 Telegram advice to REUSE "
+                         "instead of calling --new-model fresh. Omit to run both fresh.")
     ap.add_argument("--level", default="low",
-                    help="thinking level for the 3.5 call (off/minimal/low/medium/high; "
+                    help="thinking level for BOTH calls (off/minimal/low/medium/high; "
                          "default low = production Tier 2)")
     args = ap.parse_args()
 
@@ -209,20 +241,15 @@ def main() -> int:
     result = result_from_report(sec)
     logger.info("Report: %s  (ticker=%s)", report_path.name, ticker)
 
-    # --- read the pasted 3.6 reference (file or stdin) ---
+    # --- optional pasted 3.6 reference: --ref-file, or piped stdin ---
+    ref_raw = ""
     if args.ref_file:
         ref_raw = Path(os.path.expanduser(args.ref_file)).read_text(encoding="utf-8")
-    else:
-        if sys.stdin.isatty():
-            print("Paste the 3.6 Telegram advice, then Ctrl-D (Ctrl-Z⏎ on Windows):",
-                  file=sys.stderr)
+    elif not sys.stdin.isatty():
         ref_raw = sys.stdin.read()
-    if not ref_raw.strip():
-        print("ERROR: no 3.6 reference text (use --ref-file or pipe it via stdin)", file=sys.stderr)
-        return 2
-    ref = parse_telegram_advice(ref_raw, ticker)
+    ref = parse_telegram_advice(ref_raw, ticker) if ref_raw.strip() else None
 
-    # --- config / prompt (production-identical) ---
+    # --- config / prompt (production-identical, ONE shared position snapshot) ---
     config = load_config()
     if config.llm.provider != "gemini":
         print(f"advisor provider is {config.llm.provider!r}, not gemini", file=sys.stderr)
@@ -236,34 +263,52 @@ def main() -> int:
         portfolio=ps.format_portfolio_context() or "Portfolio data unavailable.",
     )
 
-    # --- the ONE new call: the old model ---
+    # --- new-model cell: reuse pasted 3.6, or call fresh ---
+    new_usd = 0.0
+    new_source = "reused (TG)"
+    new_target = "N/A (TG)"
+    new_text = ""
+    if ref is not None:
+        new = ref
+        logger.info("Reusing pasted %s advice (not billed)", args.new_model)
+    else:
+        print(f"\n{'='*68}\ncalling {args.new_model}  (thinking level: {args.level})\n{'='*68}")
+        try:
+            new_text, usage = call_gemini(prompt, llm, args.new_model, args.level)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+        i, o, t, new_usd = _cost(usage)
+        new = _parse_advice((new_text or "").strip(), ticker)
+        new_source = "fresh"
+        new_target = new.get("target") or "N/A"
+        print(f"  in={i} out={o} think={t} usd=${new_usd:.5f}")
+
+    # --- old-model cell: always fresh ---
     print(f"\n{'='*68}\ncalling {args.old_model}  (thinking level: {args.level})\n{'='*68}")
     try:
         old_text, usage = call_gemini(prompt, llm, args.old_model, args.level)
     except Exception as exc:  # noqa: BLE001
         print(f"  ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    in_tok = int(usage.get("promptTokenCount", 0))
-    out_tok = int(usage.get("candidatesTokenCount", 0))
-    think_tok = int(usage.get("thoughtsTokenCount", 0))
-    usd = (in_tok * _OLD_PRICE_IN + (out_tok + think_tok) * _OLD_PRICE_OUT) / 1_000_000
+    i, o, t, old_usd = _cost(usage)
     old = _parse_advice((old_text or "").strip(), ticker)
-    print(f"  in={in_tok} out={out_tok} think={think_tok} usd=${usd:.5f}")
+    print(f"  in={i} out={o} think={t} usd=${old_usd:.5f}")
 
     # --- comparison ---
-    new_model = config.llm.model or "gemini-3.6-flash"
-    agree = old.get("decision") == ref.get("decision") and bool(ref.get("decision"))
-    print(f"\n{'#'*68}\nSUMMARY ({ticker})\n{'#'*68}")
+    agree = old.get("decision") == new.get("decision") and bool(new.get("decision"))
+    print(f"\n{'#'*68}\nSUMMARY ({ticker} · level={args.level})\n{'#'*68}")
     print(f"{'model':18} {'decision':9} {'urgency':8} {'target':>10}  cost")
-    print(f"{new_model:18} {ref.get('decision','?'):9} {ref.get('urgency','?'):8} "
-          f"{'N/A (TG)':>10}  $0 (reused)")
+    print(f"{args.new_model:18} {new.get('decision','?'):9} {new.get('urgency','?'):8} "
+          f"{new_target:>10}  ${new_usd:.5f} ({new_source})")
     print(f"{args.old_model:18} {old.get('decision','?'):9} {old.get('urgency','?'):8} "
-          f"{(old.get('target') or 'N/A'):>10}  ${usd:.5f}")
+          f"{(old.get('target') or 'N/A'):>10}  ${old_usd:.5f} (fresh)")
     print(f"\ndecision match: {'YES' if agree else 'NO'}"
-          f"   (3.6={ref.get('decision','?')} vs 3.5={old.get('decision','?')})")
+          f"   ({args.new_model}={new.get('decision','?')} vs "
+          f"{args.old_model}={old.get('decision','?')})")
 
-    print(f"\n{'#'*68}\n3.6 ADVICE (reused, from Telegram) — {ticker}\n{'#'*68}")
-    print(ref.get("detail") or "(no detail parsed)")
+    print(f"\n{'#'*68}\n{args.new_model} ADVICE ({new_source}) — {ticker}\n{'#'*68}")
+    print((new_text or new.get("detail") or "(no detail parsed)"))
     print(f"\n{'#'*68}\n{args.old_model} ADVICE (fresh) — {ticker}\n{'#'*68}")
     print(old_text or "(empty)")
     return 0
