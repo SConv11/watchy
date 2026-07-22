@@ -4,9 +4,16 @@
 
 The advisor only consumes the analysis *result*, so this reconstructs it from a
 saved ``~/watchy/reports/*.md`` and calls Gemini once per thinking level, using
-the SAME prompt production would build (ADVISOR_PROMPT + _format_analysis digest +
+the same prompt production builds (ADVISOR_PROMPT + _format_analysis digest +
 position/portfolio). You get token usage (prompt / candidates / **thoughts**),
 cost, and the advice text per level — for a handful of Gemini calls, no DeepSeek.
+
+Fidelity note: the report's "### Portfolio Manager" section is the risk-debate
+judge_decision, mapped to ``risk_assessment`` so _format_analysis labels it the
+same way production does. The one field the .md can't restore is the graph's short
+``final_trade_decision`` (production's ``_decision_raw`` / the "Final Decision"
+block); it's left empty. Everything else matches the live advisor input, so the
+decision should now track live Tier 2 at the same model + thinking level.
 
 gemini-3.6-flash controls thinking with ``thinkingConfig.thinkingLevel``
 (minimal / low / medium / high; default medium) and REJECTS the legacy
@@ -88,6 +95,15 @@ def parse_report(text: str) -> dict[str, str]:
 
 
 def result_from_report(sec: dict[str, str]) -> dict:
+    # Map report sections to the SAME result fields production's pipeline_runner
+    # builds, so _format_analysis produces the same labelled digest the live
+    # advisor sees. The report's "### Portfolio Manager" section is the
+    # risk-debate judge_decision, which production carries in `risk_assessment`
+    # (labelled "Risk Assessment" by _format_analysis) — NOT in `_decision_raw`.
+    # `_decision_raw` is the graph's short final_trade_decision, which is NOT
+    # persisted to the .md, so it's left empty. Previously the PM call was fed
+    # under the wrong "Final Decision" label with no Risk Assessment block, which
+    # flipped the advisor's *decision* vs live Tier 2 on the same model/level.
     return {
         "_reports": {
             "market_report": sec.get("Market Analyst", ""),
@@ -96,7 +112,8 @@ def result_from_report(sec: dict[str, str]) -> dict:
             "fundamentals_report": sec.get("Fundamentals Analyst", ""),
         },
         "trader_plan": sec.get("Trader", ""),
-        "_decision_raw": sec.get("Portfolio Manager", ""),
+        "risk_assessment": sec.get("Portfolio Manager", ""),
+        "_decision_raw": "",
         "recommendations": [],
     }
 
