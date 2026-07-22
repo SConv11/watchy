@@ -52,6 +52,23 @@ genuinely bearish — never TRIM. The ONE exception: a single high-priced share
 (roughly ≥ $1,000 per share) may be trimmed fractionally when the analysis
 strongly warrants taking money off the table.
 
+TAKE-PROFIT / DON'T ROUND-TRIP A WINNER: protecting an existing gain matters as
+much as finding an entry. When the position already carries a MEANINGFUL
+unrealized gain (see "Unrealized P&L" in the position block — as a rough,
+NON-binding anchor, think roughly 15%+; a smaller gain rarely qualifies) AND the
+analysis shows the move is getting extended — price is at or into the resistance
+/ upside-target zone the analysts cite, momentum or volume is waning (weakening
+MACD, overbought or rolling-over RSI, a low-volume bounce), or the remaining
+upside to the analysts' target is small versus the downside to their stop — lean
+toward TRIM to bank part of the gain rather than letting it fully round-trip.
+This is deliberately NOT a fixed "up X% -> sell" rule: a strong, still-intact
+uptrend with real upside left should be allowed to run (HOLD), and a small gain
+with the thesis still early is not a take-profit signal. The trigger is the
+COMBINATION of a worthwhile gain and a stalling / extended setup. Respect the
+guards above — never force a fractional trim on a tiny whole-share position
+(follow the ODD-LOT guard), and judge any resulting weight against full account
+value.
+
 Respond in this exact format:
 
 Ticker: {ticker}
@@ -318,7 +335,7 @@ _ADVICE_MAX_TOKENS = 1024
 # tokens share maxOutputTokens, so the visible answer needs its own room on top.
 _GEMINI_THINK_HEADROOM = 2048
 
-# gemini-3.6-flash prices, USD per 1M tokens (update from ai.google.dev/pricing).
+# gemini-3.5-flash prices, USD per 1M tokens (update from ai.google.dev/pricing).
 # Thinking tokens are billed at the output rate. Used only for the greppable
 # GEMINICOST log estimate — the token counts logged are exact.
 _GEMINI_PRICE_IN = 1.50
@@ -418,7 +435,7 @@ def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "", level: str = "of
     """
     import urllib.request
 
-    model = llm.model or "gemini-3.6-flash"
+    model = llm.model or "gemini-3.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_effective_key(llm)}"
 
     # Thinking tokens share the output budget. On 3.6 every level (including "off"
