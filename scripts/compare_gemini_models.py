@@ -221,6 +221,13 @@ def main() -> int:
     ap.add_argument("--level", default="low",
                     help="thinking level for BOTH calls (off/minimal/low/medium/high; "
                          "default low = production Tier 2)")
+    ap.add_argument("--position-file", default="",
+                    help="OVERRIDE the live position/portfolio context with a static "
+                         "positions.yaml, bypassing Schwab/cache. Use this to replay a "
+                         "past winner you no longer hold: set average_cost + pin "
+                         "current_price so 'Unrealized P&L' reflects the gain at that "
+                         "time, and total_account_value for a realistic weight — "
+                         "otherwise the take-profit clause can't see the gain.")
     args = ap.parse_args()
 
     # --- resolve the report (same rules as compare_gemini_thinking) ---
@@ -255,7 +262,12 @@ def main() -> int:
         print(f"advisor provider is {config.llm.provider!r}, not gemini", file=sys.stderr)
         return 2
     llm = config.llm
-    ps = get_position_source(config)
+    if args.position_file:
+        from watchy.positions import FilePositionSource
+        ps = FilePositionSource(os.path.expanduser(args.position_file))
+        logger.info("Position context OVERRIDDEN from %s (Schwab bypassed)", args.position_file)
+    else:
+        ps = get_position_source(config)
     prompt = ADVISOR_PROMPT.format(
         ticker=ticker,
         analysis=_format_analysis(result),
