@@ -68,7 +68,12 @@ _AGENTS = {
     "Aggressive Analyst", "Conservative Analyst", "Neutral Analyst", "Portfolio Manager",
 }
 _DIVIDER_RE = re.compile(r"^##\s+[IVXLC]+\.\s")
-_ADVICE_MAX_TOKENS = 4096  # generous so thinking can't truncate the visible answer
+_ADVICE_MAX_TOKENS = 4096  # visible-answer ceiling
+# Thinking shares the output budget; at medium/high a level can spend ~4k tokens on
+# hidden reasoning. Give it its own headroom so the visible answer isn't truncated
+# (observed at level=high: think≈3933 + a stump 159-token answer that leaked raw
+# reasoning). maxOutputTokens is a ceiling, not a charge, so this is free.
+_THINK_HEADROOM = 4096
 
 
 def parse_report(text: str) -> dict[str, str]:
@@ -134,7 +139,7 @@ def call_gemini(prompt: str, llm, level: str, model: str = "") -> tuple[str, dic
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "maxOutputTokens": _ADVICE_MAX_TOKENS,
+            "maxOutputTokens": _ADVICE_MAX_TOKENS + _THINK_HEADROOM,
             "thinkingConfig": _thinking_config(level),
         },
     }).encode()
