@@ -19,6 +19,9 @@ MANUAL / needs the Gemini api_key in secrets.yaml. Run with the `trading` pyenv.
 
     python scripts/compare_gemini_thinking.py --ticker MOD
     python scripts/compare_gemini_thinking.py --ticker MOD --levels off,low,medium,high
+
+Pass ``--model gemini-3.6-flash`` to pin the model regardless of the config/secrets
+default (the repo default reverted to gemini-3.5-flash on 2026-07-22).
 """
 
 from __future__ import annotations
@@ -107,8 +110,8 @@ def _thinking_config(level: str) -> dict:
     return {"thinkingLevel": "minimal" if level == "off" else level}  # minimal/low/medium/high
 
 
-def call_gemini(prompt: str, llm, level: str) -> tuple[str, dict]:
-    model = llm.model or "gemini-3.6-flash"
+def call_gemini(prompt: str, llm, level: str, model: str = "") -> tuple[str, dict]:
+    model = model or llm.model or "gemini-3.6-flash"
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
            f":generateContent?key={_effective_key(llm)}")
     body = json.dumps({
@@ -136,6 +139,9 @@ def main() -> int:
     ap.add_argument("--reports-dir", default="~/watchy/reports")
     ap.add_argument("--levels", default="off,low,medium,high",
                     help="comma-separated: off, minimal, low, medium, high")
+    ap.add_argument("--model", default="",
+                    help="force the Gemini model (e.g. gemini-3.6-flash), "
+                         "independent of the config/secrets default")
     args = ap.parse_args()
 
     if args.report:
@@ -160,6 +166,8 @@ def main() -> int:
         print(f"advisor provider is {config.llm.provider!r}, not gemini", file=sys.stderr)
         return 2
     llm = config.llm
+    active_model = args.model or llm.model or "gemini-3.6-flash"
+    logger.info("Gemini model under test: %s", active_model)
     ps = get_position_source(config)
 
     prompt = ADVISOR_PROMPT.format(
@@ -175,7 +183,7 @@ def main() -> int:
     for level in levels:
         print(f"\n{'='*68}\nthinking level: {level}\n{'='*68}")
         try:
-            text, usage = call_gemini(prompt, llm, level)
+            text, usage = call_gemini(prompt, llm, level, model=active_model)
         except Exception as exc:  # noqa: BLE001
             print(f"  ERROR: {type(exc).__name__}: {exc}")
             continue
@@ -189,7 +197,7 @@ def main() -> int:
         print(f"  in={in_tok} out={out_tok} think={think_tok} usd=${usd:.5f} "
               f"decision={parsed.get('decision')!r} urgency={parsed.get('urgency')!r}")
 
-    print(f"\n{'#'*68}\nSUMMARY ({ticker})\n{'#'*68}")
+    print(f"\n{'#'*68}\nSUMMARY ({ticker} · {active_model})\n{'#'*68}")
     print(f"{'level':8} {'in':>6} {'out':>6} {'think':>6} {'usd':>9}  decision")
     for lvl, i, o, t, u, dec, urg in rows:
         print(f"{lvl:8} {i:6d} {o:6d} {t:6d} {u:9.5f}  {dec}/{urg}")
