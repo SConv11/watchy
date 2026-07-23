@@ -78,6 +78,27 @@ free with zero upkeep. If built then, gate it strictly:
 - Applies to `death_cross` / `macd_bearish_cross` only; `rsi_overbought` / `bollinger_upper_breach` are
   SEPA entry signals and are never skipped.
 
+## #28 — Take-profit / anti-round-trip  *(LLM + limit-order design; landed)*
+The user's #1 pain: winners run up, the gain isn't banked, they round-trip. Pure prompt tuning
+(the f284518 clause) can't fix it — the advisor is downstream of the analysis, which still calls a
+top "strong", and the LLM judges "extended" inconsistently. **Resolved design** (decided with the
+user, not the issue's original mechanical-trailing-stop plan):
+- **Keep the LLM in charge**; the mechanical part is a tiny **gain-gate** that only decides *when*
+  to wake the advisor and hands it ground-truth facts. Advisory-only — the user places the order.
+- **floor = unrealized gain %** (arms the take-profit zone; default 10, per-ticker override); **runway
+  = ATR** (how many ATRs of room to the analysts' cited upside → bank now vs. let it run). Upside
+  level extracted best-effort from the digest; degrades to a pure `price + k×ATR` limit when absent.
+- **Execution = pre-placed sell-limit**, whole shares only (user doesn't trade fractional). The limit
+  catches the intraday high on its own, so daily cadence suffices — hence the trigger split:
+  - **Primary: daily Tier 2** injects the directive for every held name in the zone;
+  - **Intraday: Tier 1 zone-entry trigger** fires an advisor-only call (reuses the last saved
+    digest — no fresh pipeline) the moment gain crosses the floor between daily runs, cooldown-
+    guarded, transition-detected via `state.prev_take_profit_zone` (ALTER TABLE migration).
+- New: `watchy/take_profit.py` (pure logic), `watchy/digest_store.py` (reuse), `take_profit` config
+  block (opt-in, `enabled: false`), advisor `Take-Profit:` output line, `notify.take_profit_alert`.
+- **Deferred:** hybrid full-pipeline handoff on fire; extracting a first-class resistance level (the
+  regex extractor is best-effort). Superset of #17 candidate A (sell-side); distinct from #26 (buy-side).
+
 ## Resolved design decisions (context)
 - **#13** crossover → `== 0` / `== 1` (not `not prev`, which false-fires on a ticker's first scan).
 - **#14** Tier 2 → ordinary trading days simplified risk, **first trading day of the week** full
