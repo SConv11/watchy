@@ -1,11 +1,11 @@
 ---
 name: watchy-take-profit-gap
-description: 用户痛点=卖太晚赢家 round-trip；advisor 止盈条款补不了(系统性缺口,走#17/#26)；3.6 vs 3.5 受控 A/B 结论=混合、别为治止盈切模型
+description: 用户痛点=卖太晚赢家 round-trip；#28 已实现 LLM+预挂限价单方案(gain-gate floor 浮盈%+ATR runway,advisory-only 整股,Tier2 主+Tier1 盘中触发),opt-in 待上线验证；3.6 vs 3.5 A/B=混合、别为治止盈切模型
 metadata: 
   node_type: memory
   type: feedback
   originSessionId: f643c967-dcdd-4f5f-8361-42190c001e1e
-  modified: 2026-07-22T15:45:53.047Z
+  modified: 2026-07-23T15:34:48.485Z
 ---
 
 # 用户交易痛点 & advisor 止盈缺口
@@ -54,13 +54,37 @@ RSI 超买回落、低量反弹、剩余上行 vs 止损不划算）两条件叠
 成本大致打平。**结论=别为"治止盈"去切模型**（ANET 证伪；止盈靠 #28 机械规则，与模型无关）。
 之前"3.6 更愿卖、可采用"旧判断作废。
 
-## 治本方向 → 已开专门 issue #28（2026-07-22）
-止盈缺口的真解法**不是 prompt/模型/thinking**，是**机械止盈/移动止损**——跑在 **Tier 1**(30min 无 LLM 价格扫描)、
-价格驱动、实时，不依赖 LLM 判断"动能衰竭"（分析在顶部还喊强时 LLM 必然慢半拍；且 LLM 判 extended 不一致
-=ANET 同数据 3.5 HOLD/3.6 ADD 相反）。触发=**移动止损(峰值回落 X%/ATR 倍)** 或 **摸到 #16 derived_target_price
-+浮盈过阈值→TRIM 一档**；hybrid=Tier1 机械抓回落→可选 LLM 定减多少。**3.5 在 ANET@189 自己够了个 $169 保护性
-止损——这本能正可系统化。** = **#17 候选 A 的卖出侧实例**（#26 是买入侧 allocator，无关）。设计问题(state.db 存
-峰值需 ALTER TABLE、arming 阈值/trail 宽度用 ATR、告警 vs 下单、防 whipsaw)全在 **#28** 正文。
+## 治本方向 → issue #28（2026-07-22 开）→ **已实现（2026-07-23，LLM+限价单方案，非机械止损）**
+
+**⚠️ 最终方案与 issue 正文/下面这段旧设想都不同——用户拍板走 LLM，别再想机械 trailing-stop。**
+
+**落地设计（用户逐项拍板）**：机械部分缩成一个 **gain-gate 触发器**，LLM 仍主导，执行靠**预挂 sell-limit 单**
+（限价单自己抓日内高点，所以不需要实时 trailing 代码，日更 cadence 就够）：
+- **floor = 浮盈%**（默认 10%，`take_profit_floor_gain_pct` 可按票覆盖）触发进入止盈区；喂给 LLM 的是
+  **机械事实**（浮盈越过 floor）当 ground truth，不让 LLM 判顶（绕开"分析喊强/extended 判断不一致"）。
+- **runway = ATR**（离分析师上方位还剩几个 ATR → 贴顶就落袋/有空间就让它跑）；上方位从 digest 正则尽力提取，
+  提不到就退化 `现价 + k×ATR` 限价。
+- advisor 新增 **`Take-Profit:` 输出行** = 挂单价 + **整股**数（用户不玩碎股）。
+- **主触发=日常 Tier 2**（持仓票在区内就注入指引）；**盘中触发=Tier 1 zone-entry**（浮盈盘中首次越 floor→
+  只跑 advisor、复用 digest 不跑全 pipeline，cooldown 保护，靠新列 `state.prev_take_profit_zone` 做 on-entry 检测）。
+- **advisory-only**：系统给价+股数，用户手动挂限价单。
+
+**新增文件/改动**：`watchy/take_profit.py`（纯逻辑）、`watchy/digest_store.py`（复用最近 digest）、
+`take_profit` config 段（opt-in `enabled:false` 出厂）、`notify.take_profit_alert`、advisor 注入+解析。
+顺手修了 `config.py` 读 YAML 未指定编码的隐性 bug（Windows gbk 读非 ASCII 注释崩→改 `encoding="utf-8"`）。
+6 个 commit（a815f33→20fb12d）已 push，357 tests green。
+
+**#28 仍 open**：opt-in，**未上线验证**——用户要在 VPS 开 `take_profit` 跑几天（floor 10% 是起点，全参数可调）
+再关。**上线步骤**：VPS `~/watchy/config.yaml` 设 `take_profit.enabled: true`（或改 `~/watchy_config/` 那份，
+看 CLAUDE.md 哪份生效）→ `systemctl restart watchy`（注意别在 10:30–12:00 UTC Tier-2 窗口 push/重启）。
+
+**未做（deferred）**：机械 trailing-stop（撤销）；一等公民阻力位提取（现正则尽力）；触发时的 full-pipeline hybrid；
+Schwab 自动下单。= **#17 候选 A 卖出侧实例**（#26 买入侧无关）。
+
+---
+**（作废的旧设想，留档对比）** 曾想：机械止盈/移动止损跑 Tier 1、峰值回落 X%/ATR 倍触发、摸 #16 derived_target
++浮盈阈值→TRIM。**已被 LLM+限价方案取代**——关键洞察=限价单预挂就能抓日内高点，不必实时 trailing；且
+#16 `derived_target` 是**入场价**（对持仓赢家在现价下方，方向错），当止盈天花板用不了。
 
 ## 工具/方法学备注（本次 session 修的坑）
 `scripts/compare_gemini_models.py` / `compare_gemini_thinking.py` 之前有 **digest 还原 bug**：
