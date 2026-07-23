@@ -69,6 +69,7 @@ guards above — never force a fractional trim on a tiny whole-share position
 (follow the ODD-LOT guard), and judge any resulting weight against full account
 value.
 
+{take_profit_guidance}
 Respond in this exact format:
 
 Ticker: {ticker}
@@ -78,6 +79,12 @@ Target: <the entry / accumulation price level — where one would BUY or ADD to 
 position — as a number like 215.50 (a range like 215-230 is fine). This is NOT a
 stop-loss and NOT a take-profit; it's the level to watch for getting in. Write
 N/A if the analysis gives no actionable entry level.>
+Take-Profit: <the sell-limit price at which to BANK part of this gain — a level
+ABOVE the current price the user pre-places as a limit order to catch an intraday
+high — plus the WHOLE-share count to sell there, e.g. "sell 1 share at 192.50".
+Write N/A when not taking profit (no meaningful gain, or holding the full position
+with real upside left). Only meaningful for a held winner; see any TAKE-PROFIT
+ZONE directive above.>
 
 Then write a detailed paragraph (5-8 sentences) covering:
   - Specific entry/exit price target or range, referencing levels from the analysis
@@ -104,12 +111,57 @@ Ticker: {ticker}
 """
 
 
+def _take_profit_guidance(
+    ticker: str,
+    analysis_text: str,
+    position_source: PositionSource,
+    config: WatchyConfig,
+    indicator_bundle: Any,
+) -> str:
+    """Build the take-profit directive for the prompt, or "" when inactive (#28).
+
+    Active only when take_profit is enabled AND the held position's unrealized
+    gain has crossed the (per-ticker or global) floor. The current price / ATR
+    come from indicator_bundle when given, else from the resolved position.
+    """
+    tp = config.take_profit
+    if not tp.enabled:
+        return ""
+    from watchy import take_profit as tpmod
+
+    try:
+        pos = position_source.get_position(ticker)
+    except Exception:  # noqa: BLE001
+        logger.warning("take-profit: position lookup failed for %s", ticker, exc_info=True)
+        return ""
+
+    gain = tpmod.position_gain_pct(pos)
+    floor = tpmod.effective_floor_pct(config.get_ticker_config(ticker), config)
+    if not tpmod.is_in_zone(gain, floor):
+        return ""
+
+    if indicator_bundle is not None:
+        price = indicator_bundle.current_price
+        avg_atr = tpmod.bundle_avg_atr(indicator_bundle)
+    else:
+        price = pos.current_price if pos else None
+        avg_atr = None
+    upside = tpmod.extract_upside_level(analysis_text, price)
+    logger.info(
+        "take-profit zone active for %s: gain=%.1f%% floor=%.1f%% price=%s upside=%s",
+        ticker, gain, floor, price, upside,
+    )
+    return tpmod.build_guidance(ticker, gain, price, avg_atr, upside, tp) + "\n"
+
+
 def get_advice(
     ticker: str,
     analysis_result: dict[str, Any],
     position_source: PositionSource,
     config: WatchyConfig,
     thinking_level: str = "off",
+    *,
+    indicator_bundle: Any = None,
 ) -> dict[str, str] | None:
     """Synthesize position-aware advice from analysis + portfolio.
 
@@ -117,8 +169,13 @@ def get_advice(
     caller passes the per-tier level (Tier 1 = cheap, Tier 2 = low); ignored by
     the non-gemini providers.
 
-    Returns a dict with keys: ticker, decision, urgency, detail.
-    Returns None if no LLM key is configured or the call fails.
+    ``indicator_bundle`` (optional) supplies the current price + ATR used by the
+    take-profit gate (#28): when take_profit is enabled and the held position's
+    unrealized gain has crossed the floor, an explicit take-profit directive is
+    injected into the prompt so the advisor proposes a whole-share sell-limit.
+
+    Returns a dict with keys: ticker, decision, urgency, target, take_profit,
+    detail. Returns None if no LLM key is configured or the call fails.
     """
     llm = config.llm
     if not _effective_key(llm):
@@ -131,11 +188,16 @@ def get_advice(
 
     analysis_text = _format_analysis(analysis_result)
 
+    take_profit_guidance = _take_profit_guidance(
+        ticker, analysis_text, position_source, config, indicator_bundle
+    )
+
     prompt = ADVISOR_PROMPT.format(
         ticker=ticker,
         analysis=analysis_text,
         position=position_text,
         portfolio=portfolio_text,
+        take_profit_guidance=take_profit_guidance,
     )
 
     try:
@@ -176,6 +238,7 @@ def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
         "decision": "",
         "urgency": "",
         "target": "",
+        "take_profit": "",
         "detail": "",
     }
 
@@ -183,7 +246,10 @@ def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
     # stopping at the first non-header line — the model sometimes emits a blank
     # line or a short preamble before "Decision:", which previously dropped the
     # decision/urgency entirely. Non-header lines become the detail paragraph.
-    got = {"ticker": False, "decision": False, "urgency": False, "target": False}
+    got = {
+        "ticker": False, "decision": False, "urgency": False,
+        "target": False, "take_profit": False,
+    }
     detail_lines: list[str] = []
     for line in raw.split("\n"):
         stripped = line.strip()
@@ -199,6 +265,11 @@ def _parse_advice(raw: str, fallback_ticker: str) -> dict[str, str]:
         elif not got["urgency"] and low.startswith("urgency:"):
             parsed["urgency"] = stripped.split(":", 1)[1].strip().upper()
             got["urgency"] = True
+        elif not got["take_profit"] and low.startswith("take-profit:"):
+            # #28 sell-limit + whole-share count. Captured as a header so it
+            # doesn't pollute the detail paragraph; shown verbatim in the alert.
+            parsed["take_profit"] = stripped.split(":", 1)[1].strip()
+            got["take_profit"] = True
         elif not got["target"] and low.startswith("target:"):
             # Captured as a header so it doesn't pollute the detail paragraph;
             # the numeric value (for #16's auto-target) is parsed via parse_price.

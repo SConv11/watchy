@@ -9,6 +9,7 @@ from watchy.advisor import (
     _gemini_cost_usd,
     _gemini_thinking_config,
     _parse_advice,
+    _take_profit_guidance,
 )
 
 
@@ -141,6 +142,23 @@ detail"""
         assert parsed["urgency"] == ""
         assert parsed["detail"] == raw
 
+    def test_parses_take_profit_line(self):
+        raw = (
+            "Ticker: NVDA\nDecision: TRIM\nUrgency: MEDIUM\n"
+            "Target: N/A\nTake-Profit: sell 1 share at 192.50\n\n"
+            "Bank one share into strength; hold the rest."
+        )
+        parsed = _parse_advice(raw, "NVDA")
+        assert parsed["decision"] == "TRIM"
+        assert parsed["take_profit"] == "sell 1 share at 192.50"
+        # the Take-Profit header must not leak into the detail paragraph
+        assert "192.50" not in parsed["detail"]
+
+    def test_take_profit_defaults_empty(self):
+        raw = "Ticker: NVDA\nDecision: HOLD\nUrgency: LOW\n\nHold."
+        parsed = _parse_advice(raw, "NVDA")
+        assert parsed["take_profit"] == ""
+
 
 class TestAnalystSummaryTail:
     def test_returns_table_plus_trailing_conclusion(self):
@@ -228,3 +246,75 @@ class TestFormatAnalysis:
         result = {}
         text = _format_analysis(result)
         assert text == "{}"
+
+
+class _FakeSource:
+    """Minimal PositionSource stand-in for take-profit guidance tests."""
+
+    def __init__(self, pos):
+        self._pos = pos
+
+    def get_position(self, ticker):
+        return self._pos
+
+
+def _held(gain_pct):
+    from watchy.positions import Position
+
+    p = Position(ticker="NVDA", quantity=3, average_cost=163.33, current_price=189.0)
+    p.unrealized_pnl_pct = gain_pct
+    return p
+
+
+class TestTakeProfitGuidance:
+    def _config(self, enabled, floor=10.0):
+        from watchy.config import TakeProfitConfig, TickerConfig, WatchyConfig
+
+        return WatchyConfig(
+            watchlist=[TickerConfig(ticker="NVDA")],
+            take_profit=TakeProfitConfig(enabled=enabled, floor_gain_pct=floor),
+        )
+
+    def _bundle(self):
+        from watchy.indicators import IndicatorBundle
+
+        return IndicatorBundle(ticker="NVDA", current_price=189.0, avg_atr_20d=5.0)
+
+    def test_disabled_returns_empty(self):
+        src = _FakeSource(_held(15.7))
+        out = _take_profit_guidance(
+            "NVDA", "target $200", src, self._config(enabled=False), self._bundle()
+        )
+        assert out == ""
+
+    def test_below_floor_returns_empty(self):
+        src = _FakeSource(_held(5.0))
+        out = _take_profit_guidance(
+            "NVDA", "target $200", src, self._config(enabled=True), self._bundle()
+        )
+        assert out == ""
+
+    def test_not_held_returns_empty(self):
+        src = _FakeSource(None)
+        out = _take_profit_guidance(
+            "NVDA", "target $200", src, self._config(enabled=True), self._bundle()
+        )
+        assert out == ""
+
+    def test_in_zone_builds_guidance(self):
+        src = _FakeSource(_held(15.7))
+        out = _take_profit_guidance(
+            "NVDA", "resistance at $200", src, self._config(enabled=True), self._bundle()
+        )
+        assert "TAKE-PROFIT ZONE ACTIVE" in out
+        assert "+15.7%" in out
+
+    def test_per_ticker_floor_override(self):
+        from watchy.config import TakeProfitConfig, TickerConfig, WatchyConfig
+
+        cfg = WatchyConfig(
+            watchlist=[TickerConfig(ticker="NVDA", take_profit_floor_gain_pct=20.0)],
+            take_profit=TakeProfitConfig(enabled=True, floor_gain_pct=10.0),
+        )
+        src = _FakeSource(_held(15.7))  # above global 10 but below per-ticker 20
+        assert _take_profit_guidance("NVDA", "target $200", src, cfg, self._bundle()) == ""
