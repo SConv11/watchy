@@ -199,11 +199,15 @@ def _run_ticker(
             store.complete_run(run_id, success=True, summary=result.get("summary", ""))
             store.save_ticker_state(ticker, last_full_analysis_ts=_now_iso())
 
-            # synthesize advice (reuse the position source from the gate check)
+            # synthesize advice (reuse the position source from the gate check).
+            # Pass the pre-fetched bundle so the take-profit gate (#28) can read
+            # the current price + ATR: a held winner past the floor gets an
+            # explicit sell-limit directive injected into the advisor prompt.
             position_text = position_source.format_position_context(ticker)
             advice = get_advice(
                 ticker, result, position_source, config,
                 thinking_level=config.llm.gemini_thinking_tier2,
+                indicator_bundle=bundle,
             )
 
             # Auto-derive the Tier 2 proximity target (#16) from the advisor's

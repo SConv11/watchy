@@ -74,3 +74,27 @@ class TestTier2Throttle:
 
         assert mock_run.call_count == 3
         assert set(results.keys()) == {"T0", "T1", "T2"}
+
+
+class TestTier2TakeProfitWiring:
+    def test_run_ticker_passes_bundle_to_advisor(self):
+        """The daily advisor call must receive the bundle so the #28 gate can
+        read price + ATR for a held winner."""
+        from watchy.indicators import IndicatorBundle
+        from watchy.tier2 import _PlanEntry, _run_ticker
+
+        bundle = IndicatorBundle(ticker="NVDA", current_price=189.0, avg_atr_20d=5.0)
+        entry = _PlanEntry(
+            ticker="NVDA", tc=TickerConfig(ticker="NVDA"), bundle=bundle,
+            state={}, held=True, price=189.0, avg_atr=5.0, target=None, skip=False,
+        )
+        config = WatchyConfig(watchlist=[TickerConfig(ticker="NVDA")])
+        store, notifier = MagicMock(), MagicMock()
+        store.start_run.return_value = 1
+        position_source = MagicMock()
+
+        with patch("watchy.tier2.run_pipeline", return_value={"summary": "ok"}), \
+             patch("watchy.tier2.get_advice", return_value=None) as adv:
+            _run_ticker(entry, config, store, notifier, position_source)
+
+        assert adv.call_args.kwargs["indicator_bundle"] is bundle
