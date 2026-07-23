@@ -83,6 +83,25 @@ proximity_pct_ceiling]` (default 4–20%) and falls back to the fixed percent wh
 ATR data is unavailable. Calibrate the multiple against your watchlist with
 `scripts/calibrate_atr_proximity.py` before enabling.
 
+**Take-profit / anti-round-trip (#28, opt-in):** protects unrealized gains on
+held winners — the *don't-let-a-winner-round-trip* discipline. Enable with the
+top-level `take_profit:` block (`enabled: true`). A held position whose unrealized
+gain crosses `floor_gain_pct` (default 10%) enters the **take-profit zone**: an
+explicit, fact-filled directive (unrealized gain, ATR *runway* to the analysts'
+cited upside, a reachable `price + k×ATR` sell-limit) is injected into the advisor
+prompt, so the LLM actively proposes **banking a whole-share tranche via a
+sell-limit** — output as a new `Take-Profit:` line (e.g. *"sell 1 share at
+192.50"*) — instead of staying silent while the gain fades. The mechanical
+gain-gate is ground truth (it doesn't wait for the analysis to flag a top, which
+it does inconsistently); the LLM only sizes the trim and sets the limit. It runs
+on the **daily Tier 2** advice for every held name in the zone, plus a **Tier 1
+intraday zone-entry trigger** that fires an advisor-only call (reusing the last
+saved digest — no fresh pipeline) the moment gain crosses the floor between daily
+runs, so the sell-limit is set the same day. **Advisory-only** — Watchy tells you
+the price and share count; you place the limit order (whole shares only, no
+fractional). `floor_gain_pct` is also per-ticker overridable
+(`take_profit_floor_gain_pct`); see the `take_profit` keys in Configuration.
+
 **Tier 2 batch order (#21):** the daily batch runs **held tickers first** (capital
 at risk), then watch-only **nearest-to-target first**, then no-target names last —
 so if a long batch is interrupted (auto-update restart, crash, token expiry), the
@@ -186,6 +205,7 @@ See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key se
 | `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 proximity gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on the weekly full-risk day or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
 | `min_price_proximity_pct` | **Global default** percent for the Tier 2 proximity gate (#15), applied to every watch-only (non-held) ticker; on ordinary trading days skip the daily LLM when price is farther than this from the entry target. Held tickers and the weekly full-risk run (first trading day of the week) always run; Tier 1 is unaffected. Override per-ticker with the same key. Remove to disable globally. |
 | `atr_proximity_mult` | Optional ATR-adaptive band (#15 follow-up), global or per-ticker. When set (and ATR data is available), the gate band is `mult × ATR%` (`ATR% = avg_atr_20d / price × 100`) instead of the fixed percent — wider for volatile names, narrower for calm ones. Clamped to `[proximity_pct_floor, proximity_pct_ceiling]` (default 4–20%); falls back to `min_price_proximity_pct` without ATR data. Calibrate with `scripts/calibrate_atr_proximity.py`. |
+| `take_profit` | Take-profit / anti-round-trip (#28), **opt-in** (`enabled: false` by default). Keys: `floor_gain_pct` (unrealized-gain % that arms the zone, default 10; per-ticker override via `take_profit_floor_gain_pct`), `limit_atr_mult`/`stretch_atr_mult` (size the suggested sell-limit as `price + mult×ATR`, default 1.5/3.0), `runway_near_atr`/`runway_far_atr` (ATR-runway band edges, default 1.0/2.5), `cooldown_h` (intraday zone-entry trigger cooldown, default 24). A held winner past the floor gets a sell-limit directive on the daily Tier 2 advice and a same-day Tier 1 intraday trigger. Advisory-only, whole shares. |
 | `signal_thresholds` | Detection thresholds for RSI, volume, ATR, etc. |
 | `cooldown` | Per-signal cooldown window to suppress repeat pushes |
 | `tier2_throttle_s` | Seconds to sleep between tickers in a Tier 2 daily scan (default 2.0), to smooth yfinance requests and avoid rate limits |
@@ -288,6 +308,8 @@ watchy/
     ├── state.py              # SQLite state store (crossover memory, cooldown, history)
     ├── indicators.py         # technical-indicator computation (yfinance + pandas, no LLM)
     ├── proximity.py          # shared price-proximity gate (Tier 1 & Tier 2)
+    ├── take_profit.py        # take-profit gain-gate + ATR-runway logic (#28, no LLM)
+    ├── digest_store.py       # persist latest analysis digest per ticker (#28 reuse)
     ├── orchestrator.py       # graduated pipeline selection per signal type
     ├── advisor.py            # LLM synthesis: analysis digest + position → advice (GEMINICOST log)
     ├── positions.py          # layered position source: Schwab → cached snapshot → manual file

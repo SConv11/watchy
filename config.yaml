@@ -52,6 +52,9 @@ watchlist:
   #   min_price_proximity_pct: 8.0
   #   # Per-ticker ATR-adaptive band override (overrides the global mult below).
   #   atr_proximity_mult: 5.0
+  #   # Per-ticker take-profit floor override (#28): arm this name's take-profit
+  #   # zone at a different unrealized-gain % than the global take_profit floor.
+  #   take_profit_floor_gain_pct: 15.0
 
 # Tier 2 price-proximity gate (#15) — global default applied to every watch-only
 # (non-held) ticker. On weekdays, skip the daily LLM pipeline when price is farther
@@ -74,6 +77,26 @@ min_price_proximity_pct: 8.0
 atr_proximity_mult: 3.0
 # proximity_pct_floor: 4.0
 # proximity_pct_ceiling: 20.0
+
+# Take-profit / anti-round-trip (#28) — OPT-IN (default disabled). Protects
+# unrealized gains on held winners so they don't round-trip. When enabled, a held
+# position whose unrealized gain crosses `floor_gain_pct` enters the take-profit
+# zone: an explicit directive (gain, ATR runway to the analysts' upside, a
+# reachable `price + mult x ATR` sell-limit) is injected into the advisor prompt,
+# so it proposes banking a WHOLE-share tranche via a sell-limit (a new
+# `Take-Profit:` advice line) instead of staying silent. Runs on the daily Tier 2
+# advice for every held name in the zone, plus a Tier 1 intraday zone-entry
+# trigger (advisor-only, reuses the last digest — no fresh pipeline) so the limit
+# is set the same day. Advisory-only — you place the limit order (whole shares).
+# floor_gain_pct is per-ticker overridable via take_profit_floor_gain_pct.
+take_profit:
+  enabled: false
+  floor_gain_pct: 10.0      # arm the zone at this unrealized gain %
+  limit_atr_mult: 1.5       # reachable sell-limit = price + mult x ATR
+  stretch_atr_mult: 3.0     # higher "let it run" limit when runway is large
+  runway_near_atr: 1.0      # < this many ATRs to the ceiling → bank most/all now
+  runway_far_atr: 2.5       # > this → room to run, hold or take only a stretch share
+  cooldown_h: 24            # intraday zone-entry trigger cooldown per ticker
 
 # Tier 1 intraday rescan cap (#23). Each Tier 1 signal trip launches a paid
 # [market+social] pipeline + advisor, guarded only by per-signal cooldown — so a

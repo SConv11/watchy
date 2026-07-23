@@ -178,7 +178,10 @@ class WatchyConfig:
         if not path.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
 
-        with open(path) as f:
+        # UTF-8 explicitly: config.yaml is committed/synced across machines and may
+        # carry non-ASCII comments; the platform default (e.g. gbk on Windows)
+        # would choke on them.
+        with open(path, encoding="utf-8") as f:
             raw: dict[str, Any] = yaml.safe_load(f) or {}
 
         return cls(
@@ -210,7 +213,7 @@ def _merge_secrets(config: WatchyConfig, secrets_path: str) -> WatchyConfig:
     if not os.path.exists(secrets_path):
         return config
 
-    with open(secrets_path) as f:
+    with open(secrets_path, encoding="utf-8") as f:
         secrets: dict[str, Any] = yaml.safe_load(f) or {}
 
     if "llm" in secrets:
