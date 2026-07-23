@@ -40,6 +40,11 @@ class TickerConfig:
     # trips are logged + notified but skip the paid pipeline/advisor. None = no
     # cap. Overrides the global default for this ticker.
     max_tier1_pipelines_per_day: int | None = None
+    # Optional per-ticker override of the take-profit floor (#28). When set (or
+    # inherited from WatchyConfig.take_profit.floor_gain_pct), a held position in
+    # this name enters the take-profit zone once its unrealized gain crosses this
+    # percent. Overrides the global floor for this ticker.
+    take_profit_floor_gain_pct: float | None = None
 
 
 @dataclass
@@ -79,6 +84,34 @@ class LLMConfig:
 
 
 @dataclass
+class TakeProfitConfig:
+    """Take-profit / anti-round-trip settings (#28).
+
+    A held position whose unrealized gain crosses ``floor_gain_pct`` enters the
+    "take-profit zone": the advisor prompt is augmented with an explicit,
+    fact-filled directive (unrealized gain, ATR runway, a reachable sell-limit)
+    so Gemini actively proposes banking part of the gain via a whole-share
+    sell-limit order, instead of staying silent while a winner round-trips. The
+    mechanical gain-gate is ground truth (it doesn't wait for the analysis to
+    flag a top, which it does inconsistently); the LLM only sizes the trim and
+    sets the limit. Advisory-only — the user places the limit order.
+
+    ``limit_atr_mult`` / ``stretch_atr_mult`` size the suggested sell-limit as
+    ``price + mult x ATR`` — a "good-day-reachable" level so a limit order fills
+    into a spike rather than sitting too high. ``runway_near_atr`` /
+    ``runway_far_atr`` are the ATR-runway band edges: below near = at the ceiling
+    (bank most/all), above far = room to run (hold / only a stretch share).
+    """
+    enabled: bool = False
+    floor_gain_pct: float = 10.0
+    limit_atr_mult: float = 1.5
+    stretch_atr_mult: float = 3.0
+    runway_near_atr: float = 1.0
+    runway_far_atr: float = 2.5
+    cooldown_h: int = 24
+
+
+@dataclass
 class TelegramConfig:
     bot_token: str = ""
     chat_id: str = ""
@@ -102,6 +135,7 @@ class WatchyConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     schwab: SchwabConfig = field(default_factory=SchwabConfig)
+    take_profit: TakeProfitConfig = field(default_factory=TakeProfitConfig)
     log_level: str = "INFO"
     log_file: str = "~/watchy/watchy.log"
     # Seconds to sleep between tickers in a Tier 2 daily scan, to avoid a
@@ -159,6 +193,7 @@ class WatchyConfig:
             llm=LLMConfig(**raw.get("llm", {})),
             telegram=TelegramConfig(**raw.get("telegram", {})),
             schwab=SchwabConfig(**raw.get("schwab", {})),
+            take_profit=TakeProfitConfig(**raw.get("take_profit", {})),
             log_level=raw.get("log_level", "INFO"),
             log_file=raw.get("log_file", "~/watchy/watchy.log"),
             tier2_throttle_s=raw.get("tier2_throttle_s", 2.0),
