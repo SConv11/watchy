@@ -19,6 +19,7 @@ from typing import Any
 
 from watchy.advisor import get_advice, parse_price
 from watchy.config import TickerConfig, WatchyConfig
+from watchy.digest_store import save_digest
 from watchy.indicators import IndicatorBundle, compute_indicators
 from watchy.locks import TickerLockRegistry
 from watchy.market_calendar import is_weekly_full_risk_day
@@ -198,6 +199,9 @@ def _run_ticker(
                 result.setdefault("stage_context", stage_context)
             store.complete_run(run_id, success=True, summary=result.get("summary", ""))
             store.save_ticker_state(ticker, last_full_analysis_ts=_now_iso())
+            # Stash the digest so the Tier 1 take-profit trigger (#28) can
+            # re-advise a held winner intraday off the freshest daily analysis.
+            save_digest(ticker, result)
 
             # synthesize advice (reuse the position source from the gate check).
             # Pass the pre-fetched bundle so the take-profit gate (#28) can read

@@ -6,6 +6,7 @@ from unittest.mock import patch
 from watchy.notify import (
     TelegramNotifier,
     _WORKING_LIMIT,
+    _has_take_profit,
     _split_message,
 )
 
@@ -44,6 +45,69 @@ class TestPostPayload:
         assert captured["data"]["text"] == "hi"
         assert captured["data"]["parse_mode"] == "HTML"
         assert "bottok/sendMessage" in captured["url"]
+
+
+class TestHasTakeProfit:
+    def test_actionable_values(self):
+        assert _has_take_profit("sell 1 share at 200") is True
+        assert _has_take_profit("192.50") is True
+
+    def test_non_actionable_values(self):
+        for v in ("", None, "N/A", "n/a", "NA", "None", "N/A."):
+            assert _has_take_profit(v) is False
+
+
+class TestTakeProfitAlert:
+    def _sent(self, notifier):
+        """Capture messages the notifier would send."""
+        sent = []
+        notifier.send = lambda msg: sent.append(msg) or True
+        return sent
+
+    def test_alert_includes_gain_and_sell_limit(self):
+        notifier = TelegramNotifier(bot_token="tok", chat_id="999")
+        sent = self._sent(notifier)
+        advice = {"decision": "TRIM", "urgency": "MEDIUM",
+                  "take_profit": "sell 1 share at 200", "detail": "Bank one share."}
+        notifier.take_profit_alert("NVDA", 15.7, advice, "Current position in NVDA")
+        msg = sent[0]
+        assert "Take-Profit Zone" in msg
+        assert "+15.7%" in msg
+        assert "sell 1 share at 200" in msg
+        assert "TRIM" in msg
+
+    def test_alert_omits_na_sell_limit(self):
+        notifier = TelegramNotifier(bot_token="tok", chat_id="999")
+        sent = self._sent(notifier)
+        advice = {"decision": "HOLD", "urgency": "LOW", "take_profit": "N/A"}
+        notifier.take_profit_alert("NVDA", 12.0, advice, None)
+        assert "Sell-limit:" not in sent[0]
+
+
+class TestPipelineResultTakeProfit:
+    def test_take_profit_line_shown_when_present(self):
+        notifier = TelegramNotifier(bot_token="tok", chat_id="999")
+        sent = []
+        notifier.send = lambda msg: sent.append(msg) or True
+        advice = {"decision": "TRIM", "urgency": "MEDIUM",
+                  "take_profit": "sell 2 shares at 210", "detail": "d"}
+        notifier.pipeline_result(
+            "NVDA", "scheduled_daily", {"verdict": "HOLD"},
+            position_text="Current position in NVDA", advice=advice,
+        )
+        joined = "\n".join(sent)
+        assert "sell 2 shares at 210" in joined
+
+    def test_no_take_profit_line_when_na(self):
+        notifier = TelegramNotifier(bot_token="tok", chat_id="999")
+        sent = []
+        notifier.send = lambda msg: sent.append(msg) or True
+        advice = {"decision": "HOLD", "urgency": "LOW", "take_profit": "N/A", "detail": "d"}
+        notifier.pipeline_result(
+            "NVDA", "scheduled_daily", {"verdict": "HOLD"},
+            position_text=None, advice=advice,
+        )
+        assert "Take-Profit:" not in "\n".join(sent)
 
 
 class TestSplitMessage:

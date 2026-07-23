@@ -226,6 +226,9 @@ class TelegramNotifier:
                 f"<b>Position Advice</b> — ${ticker}: {urgency_icon} <b>{decision}</b>"
                 + (f" ({urgency} urgency)" if urgency else "")
             )
+            take_profit = advice.get("take_profit", "")
+            if _has_take_profit(take_profit):
+                advice_lines.append(f"<b>💰 Take-Profit:</b> {esc(take_profit)}")
             if detail:
                 advice_lines.append(detail)
         if advice_lines:
@@ -238,6 +241,44 @@ class TelegramNotifier:
             self.send_document(report_path, caption=caption)
 
         return ok
+
+    def take_profit_alert(
+        self,
+        ticker: str,
+        gain_pct: float,
+        advice: dict[str, str] | None,
+        position_text: str | None = None,
+    ) -> bool:
+        """Notify that a held winner crossed the take-profit floor intraday (#28).
+
+        Fired by the Tier 1 zone-entry trigger. Surfaces the advisor's decision
+        and — the point of the feature — the concrete sell-limit + whole-share
+        count to pre-place so an intraday high banks the gain.
+        """
+        esc = self._escape_html
+        lines = [
+            f"<b>💰 Take-Profit Zone</b> — ${ticker}",
+            f"Unrealized gain <b>+{gain_pct:.1f}%</b> crossed the take-profit floor "
+            f"— set a sell-limit so a spike doesn't round-trip.",
+        ]
+        if position_text:
+            lines += ["", esc(position_text)]
+        if advice:
+            decision = esc(advice.get("decision", "?"))
+            urgency = advice.get("urgency", "")
+            urgency_icon = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(urgency, "")
+            lines += [
+                "",
+                f"<b>Advice</b> — ${ticker}: {urgency_icon} <b>{decision}</b>"
+                + (f" ({urgency} urgency)" if urgency else ""),
+            ]
+            take_profit = advice.get("take_profit", "")
+            if _has_take_profit(take_profit):
+                lines.append(f"<b>Sell-limit:</b> {esc(take_profit)}")
+            detail = esc(advice.get("detail", ""))
+            if detail:
+                lines.append(detail)
+        return self.send("\n".join(lines))
 
     def error(self, context: str, error: Exception) -> bool:
         """Notify on critical errors."""
@@ -368,6 +409,13 @@ class TelegramNotifier:
             return False
 
 
+def _has_take_profit(value: str | None) -> bool:
+    """True when the advisor's Take-Profit field carries an actionable sell-limit."""
+    if not value:
+        return False
+    return value.strip().upper().rstrip(".") not in ("", "N/A", "NA", "NONE")
+
+
 def _signal_label(signal_type: str) -> str:
     labels: dict[str, str] = {
         "golden_cross": "Golden Cross (50MA ↑ 200MA)",
@@ -380,6 +428,7 @@ def _signal_label(signal_type: str) -> str:
         "bollinger_lower_breach": "Bollinger Lower Band Breach",
         "volume_anomaly_strong": "Volume Anomaly (≥ 2x avg)",
         "atr_spike": "ATR Spike (≥ 1.5x avg)",
+        "take_profit_zone": "Take-Profit Zone Entered",
         "scheduled_daily": "Scheduled Daily Run",
     }
     return labels.get(signal_type, signal_type)

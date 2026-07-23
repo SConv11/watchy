@@ -9,8 +9,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from watchy import take_profit as tpmod
 from watchy.advisor import get_advice
 from watchy.config import WatchyConfig
+from watchy.digest_store import load_digest, save_digest
 from watchy.indicators import (
     IndicatorBundle,
     compute_indicators,
@@ -25,7 +27,7 @@ from watchy.orchestrator import (
     get_pipeline,
     run_pipeline,
 )
-from watchy.positions import get_position_source
+from watchy.positions import PositionSource, get_position_source
 from watchy.schwab_health import monitor_schwab
 from watchy.state import StateStore
 
@@ -64,20 +66,38 @@ def scan_ticker(
             continue
         actionable.append(sig)
 
-    if not actionable:
-        _update_state(store, bundle, ticker)
-        logger.info("Tier 1 scan complete: %s — no actionable signals", ticker)
-        return []
+    # One position source per scan, reused by both the signal pipeline and the
+    # take-profit check, so a held ticker triggers at most one live fetch. Built
+    # only when needed (a signal will run, or the take-profit gate is enabled).
+    position_source: PositionSource | None = None
+    if actionable or config.take_profit.enabled:
+        position_source = get_position_source(config)
 
-    # Serialize the pipeline for this ticker so a concurrent Tier 2 run for the
-    # same symbol doesn't double-spend the analyst budget or interleave state.
-    lock = ticker_locks.get(ticker) if ticker_locks else _nullcontext()
-    with lock:
-        for sig in actionable:
-            spec = get_pipeline(sig)
-            _handle_signal(ticker, sig, spec, bundle, config, store, notifier, pipeline_runner)
+    pipeline_ran = False
+    if actionable:
+        # Serialize the pipeline for this ticker so a concurrent Tier 2 run for
+        # the same symbol doesn't double-spend the analyst budget or interleave
+        # state.
+        lock = ticker_locks.get(ticker) if ticker_locks else _nullcontext()
+        with lock:
+            for sig in actionable:
+                spec = get_pipeline(sig)
+                _handle_signal(
+                    ticker, sig, spec, bundle, config, store, notifier,
+                    pipeline_runner, position_source,
+                )
+        pipeline_ran = True
 
-    _update_state(store, bundle, ticker)
+    # Take-profit zone-entry trigger (#28): a held winner whose unrealized gain
+    # crosses the floor intraday gets an advisor-only take-profit call so its
+    # sell-limit is set the same day, not next morning. Returns the current zone
+    # membership to persist for on-entry transition detection.
+    tp_zone = _check_take_profit_zone(
+        ticker, bundle, prev, config, store, notifier,
+        position_source, pipeline_ran,
+    )
+
+    _update_state(store, bundle, ticker, take_profit_zone=tp_zone)
     logger.info("Tier 1 scan complete: %s — signals: %s", ticker, actionable)
     return actionable
 
@@ -96,6 +116,7 @@ def _handle_signal(
     store: StateStore,
     notifier: TelegramNotifier,
     pipeline_runner: Any = None,
+    position_source: PositionSource | None = None,
 ) -> None:
     """Log the signal, notify, launch the analyst pipeline, and synthesize position advice."""
     details = _bundle_summary(bundle)
@@ -129,16 +150,21 @@ def _handle_signal(
         # validates Schwab/OAuth up front: monitor_schwab reads the resolved
         # snapshot and alerts if it isn't live (expired token) or is nearing the
         # 7-day limit. (Holdings feed the advisor below, not TradingAgents.)
-        position_source = get_position_source(config)
+        if position_source is None:
+            position_source = get_position_source(config)
         position_text = position_source.format_position_context(ticker)
         monitor_schwab(config, store, notifier, position_source)
 
         result = run_pipeline(ticker, spec, runner=pipeline_runner)
         store.complete_run(run_id, success=True, summary=result.get("summary", ""))
+        # Stash the digest so the take-profit zone trigger (#28) can re-advise
+        # intraday without paying for a fresh pipeline.
+        save_digest(ticker, result)
 
         advice = get_advice(
             ticker, result, position_source, config,
             thinking_level=config.llm.gemini_thinking_tier1,
+            indicator_bundle=bundle,
         )
 
         notifier.pipeline_result(
@@ -156,7 +182,12 @@ def _update_state(
     store: StateStore,
     bundle: IndicatorBundle,
     ticker: str,
+    take_profit_zone: int | None = None,
 ) -> None:
+    extra: dict[str, Any] = {}
+    if take_profit_zone is not None:
+        # #28 take-profit zone membership, for on-entry transition detection.
+        extra["prev_take_profit_zone"] = take_profit_zone
     store.save_ticker_state(
         ticker,
         prev_sma_50_above_200=(
@@ -173,7 +204,88 @@ def _update_state(
         avg_atr_20d=bundle.avg_atr_20d,
         # transition flags for level-based signals (#8)
         **compute_level_states(bundle),
+        **extra,
     )
+
+
+def _check_take_profit_zone(
+    ticker: str,
+    bundle: IndicatorBundle,
+    prev: dict[str, Any],
+    config: WatchyConfig,
+    store: StateStore,
+    notifier: TelegramNotifier,
+    position_source: PositionSource | None,
+    pipeline_ran: bool,
+) -> int | None:
+    """Detect a held winner crossing the take-profit floor intraday (#28).
+
+    Returns the current zone membership (1/0) to persist for transition
+    detection, or None when the gate is off / state can't be read (leave the
+    stored flag untouched). Fires an advisor-only take-profit call once, on the
+    transition INTO the zone — steady-state advice is the daily Tier 2's job.
+    """
+    if not config.take_profit.enabled or position_source is None:
+        return None
+
+    try:
+        pos = position_source.get_position(ticker)
+    except Exception:  # noqa: BLE001
+        logger.warning("take-profit: position lookup failed for %s", ticker, exc_info=True)
+        return None
+
+    gain = tpmod.position_gain_pct(pos)
+    floor = tpmod.effective_floor_pct(config.get_ticker_config(ticker), config)
+    in_zone = tpmod.is_in_zone(gain, floor)
+    if not in_zone:
+        return 0
+
+    prev_zone = prev.get("prev_take_profit_zone")
+    if prev_zone:
+        # Already in the zone last scan → steady state; the daily Tier 2 run
+        # re-advises with the same directive, no intraday call needed.
+        return 1
+    if pipeline_ran:
+        # A technical signal already ran the advisor this scan with the
+        # take-profit directive injected — don't fire a second call.
+        return 1
+    if store.is_in_cooldown(ticker, "take_profit_zone", config.take_profit.cooldown_h):
+        return 1
+
+    _fire_take_profit(ticker, bundle, config, store, notifier, position_source, gain)
+    return 1
+
+
+def _fire_take_profit(
+    ticker: str,
+    bundle: IndicatorBundle,
+    config: WatchyConfig,
+    store: StateStore,
+    notifier: TelegramNotifier,
+    position_source: PositionSource,
+    gain_pct: float,
+) -> None:
+    """Advisor-only take-profit call reusing the last digest (no fresh pipeline)."""
+    logger.info("Take-profit zone entered for %s (gain +%.1f%%)", ticker, gain_pct)
+    # Record the fire first so the cooldown holds even if the advisor call fails.
+    store.log_signal(ticker, "take_profit_zone", _bundle_summary(bundle))
+
+    loaded = load_digest(ticker)
+    analysis_result = loaded[0] if loaded else {}
+    if loaded is None:
+        logger.info("Take-profit %s: no cached digest — mechanical-facts-only advice", ticker)
+
+    try:
+        advice = get_advice(
+            ticker, analysis_result, position_source, config,
+            thinking_level=config.llm.gemini_thinking_tier1,
+            indicator_bundle=bundle,
+        )
+        position_text = position_source.format_position_context(ticker)
+        notifier.take_profit_alert(ticker, gain_pct, advice, position_text)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Take-profit advisor failed for %s", ticker)
+        notifier.error(f"Take-profit: {ticker}", exc)
 
 
 def _bundle_summary(bundle: IndicatorBundle) -> dict[str, Any]:

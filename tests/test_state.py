@@ -76,6 +76,8 @@ class TestMigration:
         "prev_bollinger_below_lower",
         "prev_volume_anomaly",
         "prev_atr_spike",
+        # #28 take-profit zone membership
+        "prev_take_profit_zone",
     ]
 
     def _make_pre_migration_db(self, path):

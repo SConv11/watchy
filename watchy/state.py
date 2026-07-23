@@ -48,6 +48,9 @@ class StateStore:
                 last_full_analysis_ts TEXT,            -- ISO timestamp of last Tier 2 run
                 derived_target_price REAL,             -- auto-derived target from analysis (#16)
                 derived_target_ts TEXT,                -- when the derived target was last set
+                -- take-profit zone membership last Tier 1 scan (#28): fire the
+                -- intraday zone-entry trigger only on the transition into it.
+                prev_take_profit_zone INTEGER,
                 updated_ts TEXT                        -- last update timestamp
             );
 
@@ -104,6 +107,8 @@ class StateStore:
             # #16 auto-derived Tier 2 proximity target (and its freshness stamp).
             "derived_target_price": "REAL",
             "derived_target_ts": "TEXT",
+            # #28 take-profit zone membership (for on-entry transition detection).
+            "prev_take_profit_zone": "INTEGER",
         }
         with self._lock:
             existing = {

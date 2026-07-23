@@ -8,14 +8,16 @@ fire the LLM pipeline and by cooldowns, not by gating the cheap scan.
 
 from unittest.mock import MagicMock, patch
 
-from watchy.config import TickerConfig, WatchyConfig
+from watchy.config import TakeProfitConfig, TickerConfig, WatchyConfig
 from watchy.indicators import IndicatorBundle
+from watchy.positions import Position
 from watchy.tier1 import scan_ticker
 
 
 def _bundle(price: float) -> IndicatorBundle:
     b = IndicatorBundle(ticker="AAPL")
     b.current_price = price
+    b.avg_atr_20d = 5.0
     return b
 
 
@@ -100,3 +102,80 @@ class TestRescanCap:
         store, notifier, run = self._fire(config, runs_today=3)
         run.assert_called_once()                   # 3 < 5, still runs
         notifier.rescan_capped.assert_not_called()
+
+
+class TestTakeProfitZone:
+    """Tier 1 take-profit zone-entry trigger (#28)."""
+
+    def _config(self, enabled=True, floor=10.0):
+        return WatchyConfig(
+            watchlist=[TickerConfig(ticker="AAPL")],
+            take_profit=TakeProfitConfig(enabled=enabled, floor_gain_pct=floor),
+        )
+
+    def _held(self, gain_pct):
+        p = Position(ticker="AAPL", quantity=3, average_cost=100.0, current_price=189.0)
+        p.unrealized_pnl_pct = gain_pct
+        return p
+
+    def _scan(self, config, *, prev_zone, gain, in_cooldown=False, digest=None):
+        """Drive a signal-free scan with the take-profit gate; return (store, notifier)."""
+        store, notifier = MagicMock(), MagicMock()
+        store.get_ticker_state.return_value = (
+            {} if prev_zone is None else {"prev_take_profit_zone": prev_zone}
+        )
+        store.is_in_cooldown.return_value = in_cooldown
+        src = MagicMock()
+        src.get_position.return_value = None if gain is None else self._held(gain)
+        src.format_position_context.return_value = "Current position in AAPL"
+        with patch("watchy.tier1.compute_indicators", return_value=_bundle(189.0)), \
+             patch("watchy.tier1.detect_signals", return_value=[]), \
+             patch("watchy.tier1.get_position_source", return_value=src), \
+             patch("watchy.tier1.load_digest", return_value=digest), \
+             patch("watchy.tier1.get_advice", return_value={"decision": "TRIM",
+                   "take_profit": "sell 1 share at 200"}) as adv:
+            scan_ticker("AAPL", config, store, notifier)
+        return store, notifier, adv
+
+    def test_fires_on_zone_entry(self):
+        store, notifier, adv = self._scan(self._config(), prev_zone=None, gain=15.7)
+        adv.assert_called_once()
+        assert adv.call_args.kwargs["indicator_bundle"] is not None
+        notifier.take_profit_alert.assert_called_once()
+        store.log_signal.assert_called_once_with("AAPL", "take_profit_zone",
+                                                 store.log_signal.call_args.args[2])
+        # zone membership persisted as 1
+        saved = store.save_ticker_state.call_args.kwargs
+        assert saved["prev_take_profit_zone"] == 1
+
+    def test_no_fire_when_already_in_zone(self):
+        store, notifier, adv = self._scan(self._config(), prev_zone=1, gain=15.7)
+        adv.assert_not_called()
+        notifier.take_profit_alert.assert_not_called()
+        assert store.save_ticker_state.call_args.kwargs["prev_take_profit_zone"] == 1
+
+    def test_no_fire_below_floor(self):
+        store, notifier, adv = self._scan(self._config(floor=20.0), prev_zone=None, gain=15.7)
+        adv.assert_not_called()
+        notifier.take_profit_alert.assert_not_called()
+        assert store.save_ticker_state.call_args.kwargs["prev_take_profit_zone"] == 0
+
+    def test_no_fire_when_not_held(self):
+        store, notifier, adv = self._scan(self._config(), prev_zone=None, gain=None)
+        adv.assert_not_called()
+        assert store.save_ticker_state.call_args.kwargs["prev_take_profit_zone"] == 0
+
+    def test_no_fire_in_cooldown(self):
+        store, notifier, adv = self._scan(
+            self._config(), prev_zone=None, gain=15.7, in_cooldown=True
+        )
+        adv.assert_not_called()
+        notifier.take_profit_alert.assert_not_called()
+
+    def test_disabled_does_nothing(self):
+        store, notifier, adv = self._scan(
+            self._config(enabled=False), prev_zone=None, gain=15.7
+        )
+        adv.assert_not_called()
+        # gate off → zone flag untouched (None), not written
+        assert "prev_take_profit_zone" not in store.save_ticker_state.call_args.kwargs
