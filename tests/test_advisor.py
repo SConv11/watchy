@@ -309,6 +309,24 @@ class TestTakeProfitGuidance:
         assert "TAKE-PROFIT ZONE ACTIVE" in out
         assert "+15.7%" in out
 
+    def test_anchors_on_the_broker_mark_not_the_bundle(self):
+        """Regression: the limit followed the (staler, lower) yfinance quote.
+
+        The gain is derived from the broker's mark, so the limit has to be too —
+        anchoring on a lower feed emits a limit that fills cheaper than intended.
+        """
+        from watchy.indicators import IndicatorBundle
+
+        src = _FakeSource(_held(15.7))  # broker mark 189.0
+        stale = IndicatorBundle(ticker="NVDA", current_price=185.0, avg_atr_20d=5.0)
+        out = _take_profit_guidance(
+            "NVDA", "resistance at $200", src, self._config(enabled=True), stale
+        )
+        assert "Current price $189.00" in out
+        assert "$185.00" not in out
+        # limit = 189 + 1.5x5 = 196.50 (not 192.50), stretch = 189 + 3x5 = 204.00
+        assert "$196.50" in out and "$204.00" in out
+
     def test_per_ticker_floor_override(self):
         from watchy.config import TakeProfitConfig, TickerConfig, WatchyConfig
 

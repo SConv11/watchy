@@ -59,6 +59,26 @@ def bundle_avg_atr(bundle: "IndicatorBundle | None") -> float | None:
     return bundle.avg_atr_20d or bundle.atr
 
 
+def anchor_price(
+    pos: "Position | None", bundle: "IndicatorBundle | None"
+) -> float | None:
+    """The price the sell-limit and ATR runway are anchored to.
+
+    Must come from the *same* feed as the unrealized gain that armed the gate.
+    The gain is the broker's live mark (``positions._derive_pnl``); the indicator
+    bundle is a separate yfinance quote that can lag it. Mixing them emits a
+    limit that silently disagrees with the stated gain — observed 2026-07-27 on
+    EMR: broker last $148.72 vs bundle $145.33, a 0.84xATR gap that put the
+    suggested sell-limit $3.40 too low. That direction is the dangerous one: a
+    low limit fills sooner and banks the winner cheaper than intended, the exact
+    error this feature exists to prevent. Falls back to the bundle when the
+    position carries no price (manual file source with no quote resolved).
+    """
+    if pos is not None and pos.current_price:
+        return pos.current_price
+    return bundle.current_price if bundle is not None else None
+
+
 def atr_runway(
     price: float | None,
     upside_level: float | None,

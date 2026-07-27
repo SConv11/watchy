@@ -140,12 +140,11 @@ def _take_profit_guidance(
     if not tpmod.is_in_zone(gain, floor):
         return ""
 
-    if indicator_bundle is not None:
-        price = indicator_bundle.current_price
-        avg_atr = tpmod.bundle_avg_atr(indicator_bundle)
-    else:
-        price = pos.current_price if pos else None
-        avg_atr = None
+    # Anchor on the position's own live mark — the feed `gain` came from — so the
+    # limit can't disagree with the gain (see tpmod.anchor_price). ATR still has
+    # to come from the bundle; it has no per-feed equivalent.
+    price = tpmod.anchor_price(pos, indicator_bundle)
+    avg_atr = tpmod.bundle_avg_atr(indicator_bundle)
     upside = tpmod.extract_upside_level(analysis_text, price)
     logger.info(
         "take-profit zone active for %s: gain=%.1f%% floor=%.1f%% price=%s upside=%s",

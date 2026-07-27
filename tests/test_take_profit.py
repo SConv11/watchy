@@ -4,6 +4,7 @@ from watchy.config import TakeProfitConfig, TickerConfig, WatchyConfig
 from watchy.indicators import IndicatorBundle
 from watchy.positions import Position
 from watchy.take_profit import (
+    anchor_price,
     atr_runway,
     build_guidance,
     bundle_avg_atr,
@@ -71,6 +72,40 @@ class TestBundleAvgAtr:
 
     def test_none_bundle(self):
         assert bundle_avg_atr(None) is None
+
+
+class TestAnchorPrice:
+    """The limit must be anchored on the same feed the gain came from (#28)."""
+
+    def test_prefers_the_position_mark_over_the_bundle(self):
+        # Real 2026-07-27 EMR divergence: broker 148.72 vs yfinance 145.33.
+        # Anchoring on the bundle put the sell-limit $3.40 too low.
+        pos = Position(ticker="EMR", quantity=1, average_cost=139.0, current_price=148.72)
+        b = IndicatorBundle(ticker="EMR", current_price=145.3261)
+        assert anchor_price(pos, b) == 148.72
+
+    def test_falls_back_to_bundle_when_position_has_no_price(self):
+        pos = Position(ticker="EMR", quantity=1, average_cost=139.0)
+        b = IndicatorBundle(ticker="EMR", current_price=145.33)
+        assert anchor_price(pos, b) == 145.33
+
+    def test_falls_back_to_bundle_when_position_price_is_zero(self):
+        pos = Position(ticker="EMR", quantity=1, average_cost=139.0, current_price=0.0)
+        b = IndicatorBundle(ticker="EMR", current_price=145.33)
+        assert anchor_price(pos, b) == 145.33
+
+    def test_no_bundle_uses_the_position(self):
+        pos = Position(ticker="EMR", quantity=1, average_cost=139.0, current_price=148.72)
+        assert anchor_price(pos, None) == 148.72
+
+    def test_neither_gives_none(self):
+        assert anchor_price(None, None) is None
+
+    def test_anchor_shifts_the_suggested_limit(self):
+        # The bug's user-visible effect: same ATR, two feeds, $3.40 of limit.
+        atr = 4.0387
+        assert abs(suggest_limit(145.3261, atr, 3.0) - 157.44) < 0.01
+        assert abs(suggest_limit(148.72, atr, 3.0) - 160.84) < 0.01
 
 
 class TestAtrRunway:

@@ -89,7 +89,8 @@ top-level `take_profit:` block, **enabled by default** (live since 2026-07-23);
 set `enabled: false` to turn it off. A held position whose unrealized
 gain crosses `floor_gain_pct` (default 10%) enters the **take-profit zone**: an
 explicit, fact-filled directive (unrealized gain, ATR *runway* to the analysts'
-cited upside, a reachable `price + k×ATR` sell-limit) is injected into the advisor
+cited upside, a reachable `price + k×ATR` sell-limit — anchored on the broker's
+live mark, the same feed the gain is derived from) is injected into the advisor
 prompt, so the LLM actively proposes **banking a whole-share tranche via a
 sell-limit** — output as a new `Take-Profit:` line (e.g. *"sell 1 share at
 192.50"*) — instead of staying silent while the gain fades. The mechanical
