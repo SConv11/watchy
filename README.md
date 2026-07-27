@@ -83,9 +83,10 @@ proximity_pct_ceiling]` (default 4–20%) and falls back to the fixed percent wh
 ATR data is unavailable. Calibrate the multiple against your watchlist with
 `scripts/calibrate_atr_proximity.py` before enabling.
 
-**Take-profit / anti-round-trip (#28, opt-in):** protects unrealized gains on
-held winners — the *don't-let-a-winner-round-trip* discipline. Enable with the
-top-level `take_profit:` block (`enabled: true`). A held position whose unrealized
+**Take-profit / anti-round-trip (#28):** protects unrealized gains on
+held winners — the *don't-let-a-winner-round-trip* discipline. Controlled by the
+top-level `take_profit:` block, **enabled by default** (live since 2026-07-23);
+set `enabled: false` to turn it off. A held position whose unrealized
 gain crosses `floor_gain_pct` (default 10%) enters the **take-profit zone**: an
 explicit, fact-filled directive (unrealized gain, ATR *runway* to the analysts'
 cited upside, a reachable `price + k×ATR` sell-limit) is injected into the advisor
@@ -205,7 +206,7 @@ See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key se
 | `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 proximity gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on the weekly full-risk day or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
 | `min_price_proximity_pct` | **Global default** percent for the Tier 2 proximity gate (#15), applied to every watch-only (non-held) ticker; on ordinary trading days skip the daily LLM when price is farther than this from the entry target. Held tickers and the weekly full-risk run (first trading day of the week) always run; Tier 1 is unaffected. Override per-ticker with the same key. Remove to disable globally. |
 | `atr_proximity_mult` | Optional ATR-adaptive band (#15 follow-up), global or per-ticker. When set (and ATR data is available), the gate band is `mult × ATR%` (`ATR% = avg_atr_20d / price × 100`) instead of the fixed percent — wider for volatile names, narrower for calm ones. Clamped to `[proximity_pct_floor, proximity_pct_ceiling]` (default 4–20%); falls back to `min_price_proximity_pct` without ATR data. Calibrate with `scripts/calibrate_atr_proximity.py`. |
-| `take_profit` | Take-profit / anti-round-trip (#28), **opt-in** (`enabled: false` by default). Keys: `floor_gain_pct` (unrealized-gain % that arms the zone, default 10; per-ticker override via `take_profit_floor_gain_pct`), `limit_atr_mult`/`stretch_atr_mult` (size the suggested sell-limit as `price + mult×ATR`, default 1.5/3.0), `runway_near_atr`/`runway_far_atr` (ATR-runway band edges, default 1.0/2.5), `cooldown_h` (intraday zone-entry trigger cooldown, default 24). A held winner past the floor gets a sell-limit directive on the daily Tier 2 advice and a same-day Tier 1 intraday trigger. Advisory-only, whole shares. |
+| `take_profit` | Take-profit / anti-round-trip (#28), **enabled** (`enabled: true` by default; set `false` to turn off). Keys: `floor_gain_pct` (unrealized-gain % that arms the zone, default 10; per-ticker override via `take_profit_floor_gain_pct`), `limit_atr_mult`/`stretch_atr_mult` (size the suggested sell-limit as `price + mult×ATR`, default 1.5/3.0), `runway_near_atr`/`runway_far_atr` (ATR-runway band edges, default 1.0/2.5), `cooldown_h` (intraday zone-entry trigger cooldown, default 24). A held winner past the floor gets a sell-limit directive on the daily Tier 2 advice and a same-day Tier 1 intraday trigger. Advisory-only, whole shares. |
 | `signal_thresholds` | Detection thresholds for RSI, volume, ATR, etc. |
 | `cooldown` | Per-signal cooldown window to suppress repeat pushes |
 | `tier2_throttle_s` | Seconds to sleep between tickers in a Tier 2 daily scan (default 2.0), to smooth yfinance requests and avoid rate limits |

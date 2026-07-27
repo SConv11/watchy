@@ -95,7 +95,8 @@ user, not the issue's original mechanical-trailing-stop plan):
     digest — no fresh pipeline) the moment gain crosses the floor between daily runs, cooldown-
     guarded, transition-detected via `state.prev_take_profit_zone` (ALTER TABLE migration).
 - New: `watchy/take_profit.py` (pure logic), `watchy/digest_store.py` (reuse), `take_profit` config
-  block (opt-in, `enabled: false`), advisor `Take-Profit:` output line, `notify.take_profit_alert`.
+  block (shipped opt-in; **enabled by default since 2026-07-27** after running live on the VPS from
+  2026-07-23), advisor `Take-Profit:` output line, `notify.take_profit_alert`.
 - **Deferred:** hybrid full-pipeline handoff on fire; extracting a first-class resistance level (the
   regex extractor is best-effort). Superset of #17 candidate A (sell-side); distinct from #26 (buy-side).
 

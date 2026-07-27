@@ -78,9 +78,10 @@ atr_proximity_mult: 3.0
 # proximity_pct_floor: 4.0
 # proximity_pct_ceiling: 20.0
 
-# Take-profit / anti-round-trip (#28) — OPT-IN (default disabled). Protects
-# unrealized gains on held winners so they don't round-trip. When enabled, a held
-# position whose unrealized gain crosses `floor_gain_pct` enters the take-profit
+# Take-profit / anti-round-trip (#28) — ENABLED (live since 2026-07-23; set
+# `enabled: false` to turn off). Protects unrealized gains on held winners so
+# they don't round-trip. A held position whose unrealized gain crosses
+# `floor_gain_pct` enters the take-profit
 # zone: an explicit directive (gain, ATR runway to the analysts' upside, a
 # reachable `price + mult x ATR` sell-limit) is injected into the advisor prompt,
 # so it proposes banking a WHOLE-share tranche via a sell-limit (a new
@@ -90,7 +91,7 @@ atr_proximity_mult: 3.0
 # is set the same day. Advisory-only — you place the limit order (whole shares).
 # floor_gain_pct is per-ticker overridable via take_profit_floor_gain_pct.
 take_profit:
-  enabled: false
+  enabled: true
   floor_gain_pct: 10.0      # arm the zone at this unrealized gain %
   limit_atr_mult: 1.5       # reachable sell-limit = price + mult x ATR
   stretch_atr_mult: 3.0     # higher "let it run" limit when runway is large
