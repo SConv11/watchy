@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: f643c967-dcdd-4f5f-8361-42190c001e1e
-  modified: 2026-07-23T15:34:48.485Z
+  modified: 2026-07-27T09:53:50.867Z
 ---
 
 # 用户交易痛点 & advisor 止盈缺口
@@ -74,9 +74,32 @@ RSI 超买回落、低量反弹、剩余上行 vs 止损不划算）两条件叠
 顺手修了 `config.py` 读 YAML 未指定编码的隐性 bug（Windows gbk 读非 ASCII 注释崩→改 `encoding="utf-8"`）。
 6 个 commit（a815f33→20fb12d）已 push，357 tests green。
 
-**#28 仍 open**：opt-in，**未上线验证**——用户要在 VPS 开 `take_profit` 跑几天（floor 10% 是起点，全参数可调）
-再关。**上线步骤**：VPS `~/watchy/config.yaml` 设 `take_profit.enabled: true`（或改 `~/watchy_config/` 那份，
-看 CLAUDE.md 哪份生效）→ `systemctl restart watchy`（注意别在 10:30–12:00 UTC Tier-2 窗口 push/重启）。
+**上线状态（2026-07-27 核实）**：用户已在 **VPS `~/watchy/config.yaml` 直接改 `enabled: true`**，
+自 **2026-07-23 起 live 跑了 4 天**，journal 里 take-profit 日志量很大（确在触发）。当时那个改动是
+**VPS 本地 dirty（`git status` 显示 ` M config.yaml`）、没进 repo** → 下次 `git pull` 会在这行冲突。
+**已收敛**：本地 commit `799c7f8` 把 repo 默认也改成 `enabled: true`（连带 README 配置表 + 本行说明 +
+IMPLEMENTATION_PLAN 的 "opt-in" 措辞一起改），357 tests green。
+**VPS 收敛步骤**（必须等本地 push 之后再跑，否则会把 live 的 flip 丢掉、止盈静默）：
+`cd ~/watchy && git checkout -- config.yaml && git pull`。
+⚠️ push/重启避开 10:30–12:00 UTC Tier-2 窗口（auto-update timer 会重启 daemon）。
+**2026-07-27 验证结论：4 天零触发 = 正确行为，不是 bug**。持仓最高浮盈仅 EMR +7.0% / SKHY +6.2% /
+NVDA +4.6%，全都够不到 floor 10%（Schwab live 正常、cost basis 正常）。**注意：journal 里根本没有
+`Take-Profit:` 字样**——那是 LLM 输出行、只进 Telegram；真正的 journal 标记是
+`take-profit zone active for X: gain=..` (advisor.py:151, INFO) 和 `Take-profit zone entered` (tier1.py:269)。
+
+**受控 dry-run 验证通过（EMR，floor 临时降 5% 且只改内存、不动 live config）**：gate 触发 → 正则从
+7/24 digest 提到 `upside=185.0` → runway 9.8 ATR(>far 2.5) → 走 stretch 3×ATR → 输出
+`take_profit: sell 1 share at 157.44`(整股、在市价上方)、decision=HOLD。一次 advisor 调用 $0.0112。
+**核心链路全对。** dry-run 脚本模板见本条历史（load_config→改 c.take_profit.floor_gain_pct→
+compute_indicators→load_digest→get_advice）；注意 IndicatorBundle 字段是 `current_price` 不是 `price`。
+
+**🐛 发现真 bug（待修）：限价锚定价源不一致**。`advisor.py:144-148` 有 bundle 时 `price =
+indicator_bundle.current_price`（yfinance，EMR=145.33），但 gain 来自 Schwab（live last=148.72）——
+差 $3.40≈0.84 ATR。结果限价 157.44 而非 160.84，**偏低=更容易成交=比预期卖便宜**，对"别卖太便宜"
+这个目标方向性错误。修法：优先 `pos.current_price`(live)，bundle 当 fallback。
+
+**#28 仍 open**：核心已验证，但 **Tier 1 zone-entry 转换 + `notify.take_profit_alert` 仍未实跑过**
+（要等真有票越 10%，或专门造一次）。
 
 **未做（deferred）**：机械 trailing-stop（撤销）；一等公民阻力位提取（现正则尽力）；触发时的 full-pipeline hybrid；
 Schwab 自动下单。= **#17 候选 A 卖出侧实例**（#26 买入侧无关）。
