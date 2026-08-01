@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 59228ea1-72b5-4746-be2d-7cf8847d06b0
-  modified: 2026-07-22T13:26:17.188Z
+  modified: 2026-08-01T04:56:44.621Z
 ---
 
 # Watchy LLM API 成本基线
@@ -18,6 +18,21 @@ metadata:
   - quick_think_llm = `deepseek-v4-flash`（analysts / debaters / trader）
   - 调度：每日 `11:30 UTC` 跑一次（周六跳过）
 - **Advisor（持仓建议合成，`watchy/advisor.py`）**：provider=Gemini，model=`gemini-3.5-flash`（VPS 实跑用的是 3.5-flash，确认于 2026-06-10；`secrets.example.yaml` 里的 2.5-flash 只是示例值）
+
+## ⚠️ V4-Flash-0731 上线（2026-07-31，官方公告 api-docs.deepseek.com/updates）
+- **`deepseek-v4-flash` 从 Preview 转正式公测**，快照名 **DeepSeek-V4-Flash-0731**：**同架构重训**（不是新架构）。
+- **调用方式不变**——官方原话"simply set the model name to `deepseek-v4-flash`"，**没有带日期的 model id 可选**。
+- **Watchy 无版本锁**：`pipeline_runner.py:29-30` 硬编码浮动别名 `deepseek-v4-pro`/`deepseek-v4-flash`，
+  `daemon.py:228` 不传覆盖 → **DeepSeek 一切别名，VPS 就自动吃到新快照，本地零操作**。想锁版本得在 daemon.py:228
+  传 `quick_think_llm=`/`deep_think_llm=`（目前无此需求，也无带日期 id 可锁）。
+- **核不出来是正常的**：API 响应的 `model` 字段大概率只回 `deepseek-v4-flash`（无日期后缀），
+  TOKENCOST 也不记原始 model 串（`_price_tier()` 先归成 pro/flash 才打日志）→ **发布日期就是唯一证据**。
+- **价格未变**（2026-08-01 复核 pricing 页）：flash $0.14 miss/$0.0028 hit/$0.28 out，pro $0.435/$0.003625/$0.87
+  = 与 `token_tracker._PRICES` 完全一致 → **切快照不影响历史 TOKENCOST 可比性，无需改代码**。
+- **⚠️ 高峰加价改口径**：pricing 页现写 2x 高峰政策"effective date pending official announcement"（比本文下方记的"已生效"更软）。
+  窗口不变（北京 09:00–12:00 / 14:00–18:00），10:30 UTC 批次两头都不沾，不受影响。
+- **待观察**：重训的 flash 驱动 4 分析师 + 多空 + trader（quick_think 全线）。决策不变也可能改报告详略 → 体现为 token 漂移。
+  盯接下来几条 TOKENCOST 的分析师节点 `out=`，若明显偏离工作日 $0.0272/票基线，那是重训不是 bug。
 
 ## 成本基线（2026-06-09，单交易日）
 **CNY 和 USD 分开记，不换算混算：**
