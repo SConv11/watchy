@@ -6,44 +6,73 @@
 #   cp secrets.example.yaml ~/watchy_config/secrets.yaml
 #   # then edit secrets.yaml with your real keys
 
+# Tiered Tier 2 cadence (see tier2_days at the bottom of this file). Short-form
+# entries run EVERY trading day; a long-form `tier2_days` puts a ticker on a
+# lighter rotation. Rationale: one daily 4-analyst pipeline costs ~$9.6/yr per
+# ticker regardless of position size — 1.1% of an $850 holding but 15% of a $63
+# one — and 18 daily tickers pushed the batch past the 13:30 UTC market open.
+# The weekly full-risk day (first trading session of the week) and any position
+# already in the take-profit zone ALWAYS run, whatever is set here.
 watchlist:
-  - "SKHY"
-  - "MU"
-  - "COHR"
-  - "AMZN"
-  - "GOOG"
+  # --- Daily: the largest positions, where the daily spend is clearly worth it.
   - "AVGO"
+  - "TSM"
+  - "GOOG"
+  - "AMZN"
+  - "VRT"
   - "NVDA"
+  - "SKHY"        # smaller, but pinned daily by explicit request
+
+  # --- Mon/Wed/Fri
+  - ticker: "EMR"
+    tier2_days: ["mon", "wed", "fri"]
+  - ticker: "APH"
+    tier2_days: ["mon", "wed", "fri"]
+  - ticker: "NVT"
+    tier2_days: ["mon", "wed", "fri"]
+
+  # --- Tue/Thu
+  - ticker: "ASML"
+    tier2_days: ["tue", "thu"]
+  - ticker: "VST"
+    tier2_days: ["tue", "thu"]
+  - ticker: "LUMN"
+    tier2_days: ["tue", "thu"]
+
+  # --- Watch-only (not held). Also still subject to the proximity gate below.
+  - ticker: "MU"
+    tier2_days: ["mon", "thu"]
+  - ticker: "COHR"
+    tier2_days: ["mon", "thu"]
+  - ticker: "ETN"
+    tier2_days: ["tue", "fri"]
+  - ticker: "LRCX"
+    tier2_days: ["tue", "fri"]
+  - ticker: "CEG"
+    tier2_days: ["wed"]
+
   # - "ANET"
   # - "CARR"
-  - "EMR"
-  - "NVT"
-  - "VST"
-  - "ETN" 
-  - "VRT"
-  - "LRCX"
-  - "LUMN"
-  - "ASML"
   # - "MOD"
-  
   # - "AAPL"
   # - "KLAC"
   # - "AMAT"
   # - "RMBS"
-  - "APH"
   # - "HUBB"
   # - "TSLA"
   # - "SOXX"
   # - "SMCI"
-  - "CEG"
-  - "TSM"
 
   
-  # Short form uses defaults: scan every 30min, daily at 10:30 UTC.
+  # Short form uses defaults: scan every 30min, daily at 10:00 UTC, every day.
   # For per-ticker overrides, use the long form:
   # - ticker: "NVDA"
   #   tier1_interval_h: 2
   #   tier2_time_utc: "14:30"
+  #   # Tiered cadence: which weekdays this ticker's Tier 2 runs on. Omit to
+  #   # inherit the global tier2_days (which itself defaults to every day). The
+  #   # weekly full-risk day and take-profit-zone positions ignore this.
+  #   tier2_days: ["mon", "wed", "fri"]
   #   # Optional manual entry level (else the #16 auto-derived target is used).
   #   target_price: 180.0
   #   # Per-ticker override of the global Tier 2 gate (min_price_proximity_pct
@@ -59,10 +88,17 @@ watchlist:
 # Tier 2 price-proximity gate (#15) — global default applied to every watch-only
 # (non-held) ticker. On weekdays, skip the daily LLM pipeline when price is farther
 # than this percent from the entry target (manual target_price, else the #16
-# auto-derived one). Held tickers and Sunday always run; Tier 1 is never gated.
+# auto-derived one). Held tickers and the weekly full-risk day (first trading
+# session of the week) always run; Tier 1 is never gated.
 # A per-ticker min_price_proximity_pct (long-form watchlist above) overrides this.
 # Remove this line to disable the gate globally.
 min_price_proximity_pct: 8.0
+
+# Global default tiered cadence for Tier 2, applied to every ticker that doesn't
+# set its own tier2_days. Leave commented out for "every trading day" — the
+# historical behaviour. The per-ticker groups in the watchlist above are what
+# actually shorten the batch, so this stays unset.
+# tier2_days: ["mon", "tue", "wed", "thu", "fri"]
 
 # Optional ATR-adaptive band (#15 follow-up). When set, the gate band becomes
 # atr_proximity_mult x ATR% (ATR% = avg_atr_20d / price x 100) instead of the

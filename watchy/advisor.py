@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from watchy.config import LLMConfig, WatchyConfig
@@ -146,11 +147,17 @@ def _take_profit_guidance(
     price = tpmod.anchor_price(pos, indicator_bundle)
     avg_atr = tpmod.bundle_avg_atr(indicator_bundle)
     upside = tpmod.extract_upside_level(analysis_text, price)
+    # Share count decides which actions are even placeable (fractional -> market
+    # only, 1 share -> full exit or nothing), so it has to reach the directive.
+    shares = pos.quantity if pos is not None else None
     logger.info(
-        "take-profit zone active for %s: gain=%.1f%% floor=%.1f%% price=%s upside=%s",
-        ticker, gain, floor, price, upside,
+        "take-profit zone active for %s: gain=%.1f%% floor=%.1f%% price=%s "
+        "upside=%s shares=%s",
+        ticker, gain, floor, price, upside, shares,
     )
-    return tpmod.build_guidance(ticker, gain, price, avg_atr, upside, tp) + "\n"
+    return tpmod.build_guidance(
+        ticker, gain, price, avg_atr, upside, tp, shares=shares
+    ) + "\n"
 
 
 def get_advice(
@@ -428,9 +435,63 @@ def _effective_key(llm: LLMConfig) -> str:
     return llm.api_key
 
 
+# A single dropped connection used to cost a ticker its whole advice card AND
+# its derived-target write (tier2 stores the #16 target off the advisor's Target
+# field), because these calls had no retry at all — observed 2026-08-07 on
+# NVT/TSM/COHR, all three failing in http.client._read_status. 30s was also tight
+# for a long prompt plus thinking.
+_HTTP_TIMEOUT = 60
+_HTTP_ATTEMPTS = 3
+_HTTP_BACKOFF_S = 2.0
+
+
+def _post_json(
+    url: str,
+    body: bytes,
+    headers: dict[str, str],
+    *,
+    timeout: int = _HTTP_TIMEOUT,
+    attempts: int = _HTTP_ATTEMPTS,
+) -> dict[str, Any]:
+    """POST JSON and decode the reply, retrying transient failures.
+
+    Retries socket timeouts, dropped/reset connections (the ``getresponse`` ->
+    ``_read_status`` class, which urllib does NOT wrap in URLError), 429, and
+    5xx. Any other 4xx is a genuine request error — raise at once, no retry.
+    """
+    import http.client
+    import urllib.error
+
+    req = urllib.request.Request(url, data=body, headers=headers)
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 and exc.code < 500:
+                raise
+            last_exc = exc
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+        ) as exc:
+            last_exc = exc
+        if attempt < attempts:
+            delay = _HTTP_BACKOFF_S * (2 ** (attempt - 1))
+            logger.warning(
+                "LLM HTTP attempt %d/%d failed (%s: %s) — retrying in %.0fs",
+                attempt, attempts, type(last_exc).__name__, last_exc, delay,
+            )
+            time.sleep(delay)
+    assert last_exc is not None  # unreachable: the loop either returns or sets it
+    raise last_exc
+
+
 def _call_anthropic(prompt: str, llm: LLMConfig) -> str:
     """Call Anthropic Messages API for advice synthesis."""
-    import urllib.request
 
     url = llm.api_base or "https://api.anthropic.com/v1/messages"
     if not url.endswith("/messages"):
@@ -442,23 +503,16 @@ def _call_anthropic(prompt: str, llm: LLMConfig) -> str:
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
 
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": _effective_key(llm),
-            "anthropic-version": "2023-06-01",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-        return data["content"][0]["text"]
+    data = _post_json(url, body, {
+        "Content-Type": "application/json",
+        "x-api-key": _effective_key(llm),
+        "anthropic-version": "2023-06-01",
+    })
+    return data["content"][0]["text"]
 
 
 def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
     """Call OpenAI-compatible Chat API (OpenAI, DeepSeek, etc.)."""
-    import urllib.request
 
     default_bases = {
         "openai": "https://api.openai.com/v1",
@@ -473,17 +527,11 @@ def _call_openai_compatible(prompt: str, llm: LLMConfig) -> str:
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
 
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {_effective_key(llm)}",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"]
+    data = _post_json(url, body, {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {_effective_key(llm)}",
+    })
+    return data["choices"][0]["message"]["content"]
 
 
 def _gemini_thinking_config(level: str) -> dict:
@@ -503,7 +551,6 @@ def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "", level: str = "of
     Uses the Gemini REST API (not Vertex AI).
     API key from: https://aistudio.google.com/apikey
     """
-    import urllib.request
 
     model = llm.model or "gemini-3.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_effective_key(llm)}"
@@ -520,13 +567,7 @@ def _call_gemini(prompt: str, llm: LLMConfig, ticker: str = "", level: str = "of
         },
     }).encode()
 
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+    data = _post_json(url, body, {"Content-Type": "application/json"})
 
     # Greppable cost line — the advisor (Gemini) is NOT covered by the DeepSeek
     # TOKENCOST callback, so log its usage here. thoughtsTokenCount is the

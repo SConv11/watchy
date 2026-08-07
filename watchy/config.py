@@ -14,7 +14,19 @@ import yaml
 class TickerConfig:
     ticker: str
     tier1_interval_h: float = 0.5
-    tier2_time_utc: str = "10:30"
+    # 10:00 UTC = 06:00 ET. Earliest start that still clears DeepSeek's announced
+    # peak surcharge (2x on 01:00-04:00 and 06:00-10:00 UTC; announced 2026-06-30,
+    # not active as of 2026-08-07). Starting earlier is NOT free — 08:00 would put
+    # the whole batch inside that window. The batch should also finish before the
+    # 13:30 UTC market open; see tier2_days for the cadence that keeps it short.
+    tier2_time_utc: str = "10:00"
+    # Optional tiered cadence: weekday abbreviations this ticker runs Tier 2 on
+    # ("mon".."fri", case-insensitive). None inherits WatchyConfig.tier2_days, and
+    # a global None means "every trading day" (the historical behaviour). Lets the
+    # daily spend go where it is worth it — a $63 position costs the same ~$9.6/yr
+    # to analyse daily as an $850 one. NEVER skips the weekly full-risk day or a
+    # ticker already in the take-profit zone (see tier2._should_skip_cadence).
+    tier2_days: list[str] | None = None
     # Optional manual entry/accumulation target. Used by the Tier 2 proximity
     # gate (#15) as the effective target when set (else the #16 auto-derived one).
     # Tier 1 is never proximity-gated.
@@ -163,6 +175,10 @@ class WatchyConfig:
     # several paid rescans in a day. This caps that. None disables the cap globally.
     # Tier 2 scheduled runs are never affected.
     max_tier1_pipelines_per_day: int | None = None
+    # Global default tiered cadence for Tier 2 (see TickerConfig.tier2_days).
+    # None = every trading day, i.e. the historical behaviour, so leaving this
+    # unset changes nothing. A per-ticker tier2_days overrides it.
+    tier2_days: list[str] | None = None
 
     def get_ticker_config(self, ticker: str) -> TickerConfig | None:
         """Return the TickerConfig for a symbol (case-insensitive), or None."""
@@ -205,6 +221,7 @@ class WatchyConfig:
             proximity_pct_floor=raw.get("proximity_pct_floor", 4.0),
             proximity_pct_ceiling=raw.get("proximity_pct_ceiling", 20.0),
             max_tier1_pipelines_per_day=raw.get("max_tier1_pipelines_per_day"),
+            tier2_days=raw.get("tier2_days"),
         )
 
 

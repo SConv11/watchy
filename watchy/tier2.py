@@ -29,6 +29,7 @@ from watchy.positions import get_position_source
 from watchy.proximity import is_outside_proximity
 from watchy.schwab_health import monitor_schwab
 from watchy.state import StateStore
+from watchy.take_profit import effective_floor_pct, is_in_zone, position_gain_pct
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,15 @@ def run_daily_scan(
     # 429), so the most important names should be analysed before any of those.
     for entry in _ordered_run_plan(plan):
         ticker = entry.ticker
+        if entry.cadence_skip:
+            logger.info(
+                "Tier 2 skip %s — not scheduled today (cadence %s, today=%s)",
+                ticker,
+                _format_days(_effective_tier2_days(entry.tc, config)),
+                now.strftime("%a").lower(),
+            )
+            results[ticker] = {"ticker": ticker, "skipped": "not_scheduled_today"}
+            continue
         if entry.skip:
             pct = _effective_proximity_pct(entry.tc, config, entry.avg_atr, entry.price)
             logger.info(
@@ -91,8 +101,14 @@ def run_daily_scan(
             results[ticker] = {"error": str(exc)}
 
     succeeded = sum(1 for r in results.values() if "error" not in r)
+    # Advisor failures don't fail the run, so they were invisible in this line
+    # until 2026-08-07 (3 silent ones in a batch that reported 18/18). Count them
+    # separately rather than folding them into `succeeded`.
+    advisor_failed = sum(1 for r in results.values() if r.get("advisor_failed"))
+    skipped = sum(1 for r in results.values() if r.get("skipped"))
     logger.info(
-        "Tier 2 daily scan complete: %d/%d succeeded", succeeded, len(config.watchlist)
+        "Tier 2 daily scan complete: %d/%d succeeded (%d skipped, %d advisor-failed)",
+        succeeded, len(config.watchlist), skipped, advisor_failed,
     )
     return results
 
@@ -109,6 +125,10 @@ class _PlanEntry:
     avg_atr: float | None
     target: float | None
     skip: bool
+    # Not scheduled for Tier 2 today under the tiered cadence (tier2_days).
+    # Distinct from `skip`, which is the price-proximity gate (#15) — the two
+    # have different causes and get different log lines / result markers.
+    cadence_skip: bool = False
 
 
 def _prefetch_plan(
@@ -134,10 +154,35 @@ def _prefetch_plan(
         held = _is_held(position_source, ticker)
         target = _effective_target(tc, state)
         skip = _should_skip_tier2(price, tc, state, now, held, config, avg_atr)
+        cadence_skip = _should_skip_cadence(
+            tc, config, now, _in_take_profit_zone(position_source, ticker, config)
+        )
         plan.append(
-            _PlanEntry(ticker, tc, bundle, state, held, price, avg_atr, target, skip)
+            _PlanEntry(
+                ticker, tc, bundle, state, held, price, avg_atr, target, skip,
+                cadence_skip,
+            )
         )
     return plan
+
+
+def _in_take_profit_zone(
+    position_source: Any, ticker: str, config: WatchyConfig
+) -> bool:
+    """Whether this held position's gain has already crossed the floor (#28).
+
+    The cadence must never be what hides a winner past its take-profit floor, so
+    this is checked before deciding to skip. Purely mechanical — no LLM, no cost.
+    """
+    if not config.take_profit.enabled:
+        return False
+    try:
+        pos = position_source.get_position(ticker)
+    except Exception:  # noqa: BLE001
+        logger.warning("cadence: position lookup failed for %s", ticker, exc_info=True)
+        return False
+    gain = position_gain_pct(pos)
+    return is_in_zone(gain, effective_floor_pct(config.get_ticker_config(ticker), config))
 
 
 def _ordered_run_plan(plan: list[_PlanEntry]) -> list[_PlanEntry]:
@@ -213,6 +258,15 @@ def _run_ticker(
                 thinking_level=config.llm.gemini_thinking_tier2,
                 indicator_bundle=bundle,
             )
+
+            # An advisor failure is not fatal to the run (the analysis itself is
+            # still worth sending), but it must not stay silent: no advice card
+            # AND no derived-target refresh for the gate. Surface it and mark the
+            # result so the batch summary can count it.
+            if advice is None:
+                logger.warning("Tier 2: no advice synthesized for %s", ticker)
+                notifier.advisor_failed(ticker, "Tier 2 scheduled daily run")
+                result["advisor_failed"] = True
 
             # Auto-derive the Tier 2 proximity target (#16) from the advisor's
             # Target field, so the gate self-maintains. Manual config.target_price
@@ -291,6 +345,65 @@ def _effective_proximity_pct(
     if tc is not None and tc.min_price_proximity_pct is not None:
         return tc.min_price_proximity_pct
     return config.min_price_proximity_pct if config is not None else None
+
+
+_WEEKDAY_NUM = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_WEEKDAY_NAME = {n: d for d, n in _WEEKDAY_NUM.items()}
+
+
+def _format_days(days: set[int] | None) -> str:
+    """Weekday numbers back to a stable 'mon,wed,fri' for logging."""
+    if not days:
+        return "every-day"
+    return ",".join(_WEEKDAY_NAME[n] for n in sorted(days))
+
+
+def _effective_tier2_days(
+    tc: TickerConfig | None, config: WatchyConfig | None
+) -> set[int] | None:
+    """Weekday numbers this ticker runs Tier 2 on; None = every trading day.
+
+    Per-ticker tier2_days wins over the global default. Unparseable names are
+    ignored rather than fatal — a typo should not silently mute a ticker, and if
+    nothing survives parsing we fall back to "every day".
+    """
+    raw = None
+    if tc is not None and tc.tier2_days is not None:
+        raw = tc.tier2_days
+    elif config is not None:
+        raw = config.tier2_days
+    if not raw:
+        return None
+    days = {
+        n for d in raw
+        if (n := _WEEKDAY_NUM.get(str(d).strip().lower()[:3])) is not None
+    }
+    return days or None
+
+
+def _should_skip_cadence(
+    tc: TickerConfig | None,
+    config: WatchyConfig | None,
+    now: datetime,
+    in_take_profit_zone: bool,
+) -> bool:
+    """Whether the tiered cadence takes this ticker off today's batch.
+
+    Two hard exemptions, so cadence can only ever delay a routine read:
+
+    * the weekly full-risk day (first trading session of the week) — every
+      ticker keeps its guaranteed weekly full pass;
+    * a position already in the take-profit zone — the one thing the user most
+      needs surfaced must not be what a cost optimisation hides.
+    """
+    if is_weekly_full_risk_day(now):
+        return False
+    if in_take_profit_zone:
+        return False
+    days = _effective_tier2_days(tc, config)
+    if days is None:
+        return False
+    return now.weekday() not in days
 
 
 def _should_skip_tier2(

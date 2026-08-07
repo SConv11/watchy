@@ -55,6 +55,16 @@ def setup_logging(config: WatchyConfig) -> None:
     sh.setFormatter(fmt)
     root.addHandler(sh)
 
+    # log_level applies to the ROOT logger, so DEBUG also switched on the HTTP
+    # clients — and openai._base_client logs each request's full json_data, i.e.
+    # the entire LLM prompt (tens of KB per call) into journald. That buried the
+    # greppable TOKENCOST/gate lines and ate the retention we keep for cost
+    # reconciliation. Muzzle the body dumps but keep watchy's own DEBUG intact.
+    # httpx stays at INFO on purpose: one short "HTTP Request: POST ... 200 OK"
+    # line per call is genuinely useful and costs nothing.
+    for noisy in ("openai._base_client", "httpcore"):
+        logging.getLogger(noisy).setLevel(max(root.level, logging.INFO))
+
 
 def build_scheduler(
     config: WatchyConfig,

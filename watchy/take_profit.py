@@ -140,6 +140,79 @@ def extract_upside_level(analysis_text: str, current_price: float | None) -> flo
     return min(candidates) if candidates else None
 
 
+def _sizing_directive(
+    shares: float | None, runway: float | None, cfg: "TakeProfitConfig"
+) -> str:
+    """The action-space block: which sizes are actually executable (#28).
+
+    Position size decides what the user can place, and getting it wrong emits
+    advice they cannot act on. Three tiers:
+
+    * ``< 1`` — a fractional remainder. A sell-LIMIT needs whole shares, so only
+      MARKET sells (partial or full) are executable. That forfeits the
+      pre-placed limit that normally catches the intraday high, so it only asks
+      for action when the runway says price is at the ceiling.
+    * ``== 1`` — a partial trim is arithmetically impossible; the only
+      whole-share choices are a full exit or holding. Gated on a small runway so
+      a winner with room left isn't cashed out wholesale.
+    * ``>= 2`` — the normal case: trim a whole-share tranche at a limit.
+
+    An unknown ``shares`` (None) falls through to the whole-share wording, which
+    is the historical behaviour.
+    """
+    at_ceiling = runway is not None and runway < cfg.runway_near_atr
+
+    if shares is not None and shares < 1:
+        act = (
+            "The runway above says price is at the ceiling, so asking for the "
+            "sale now is justified"
+            if at_ceiling
+            else "There is still runway above, so prefer holding unless the "
+            "analysis argues the top is already in"
+        )
+        return (
+            f"- FRACTIONAL POSITION ({shares:g} shares): this holding is smaller "
+            "than one share, so a sell-LIMIT order CANNOT be placed on it — limit "
+            "orders require whole shares. Do NOT propose a limit price here. The "
+            "only executable actions are a MARKET sell of part or all of the "
+            f"fractional position, or holding. {act}. Fill the 'Take-Profit:' line "
+            "with a plain market instruction and NO price (e.g. 'market-sell all "
+            "0.2 shares' or 'market-sell 0.1 of 0.2 shares'), else write N/A. Note "
+            "this forfeits the pre-placed-limit safety net — the user must act by "
+            "hand — so only ask for it when it is genuinely warranted."
+        )
+
+    if shares is not None and shares < 2:
+        if at_ceiling:
+            return (
+                "- SINGLE-SHARE POSITION: exactly 1 share, so a partial trim is "
+                "arithmetically impossible — the only whole-share actions are "
+                "selling the ENTIRE position or holding. The runway above says "
+                "price is at the ceiling, so a full exit IS on the table: fill the "
+                "'Take-Profit:' line with 'sell the whole 1-share position at "
+                "<limit>', using a limit ABOVE the current price. Write N/A only if "
+                "you would genuinely rather hold."
+            )
+        return (
+            "- SINGLE-SHARE POSITION: exactly 1 share, so a partial trim is "
+            "arithmetically impossible, and the runway above shows real room left. "
+            "Do NOT liquidate the whole position just to bank a trim — write N/A on "
+            "the 'Take-Profit:' line and hold."
+        )
+
+    return (
+        "- WHOLE SHARES ONLY: this position is sized in whole shares and the user "
+        "does not want a fractional tranche of it. Your take-profit tranche must be "
+        "a whole-share count (sell 1 share / 2 shares / or the whole position); "
+        "never propose a fractional sale.\n"
+        "- Fill in the 'Take-Profit:' output line with a concrete sell-limit price "
+        "AND the whole-share count to sell there (e.g. 'sell 1 share at 192.50'). "
+        "This is a limit ABOVE the current price the user will pre-place to catch "
+        "an intraday high. Write N/A only if you are genuinely recommending to hold "
+        "the entire position with meaningful upside intact."
+    )
+
+
 def build_guidance(
     ticker: str,
     gain_pct: float,
@@ -147,13 +220,18 @@ def build_guidance(
     avg_atr: float | None,
     upside_level: float | None,
     cfg: "TakeProfitConfig",
+    shares: float | None = None,
 ) -> str:
     """The explicit take-profit directive injected into the advisor prompt (#28).
 
     Carries the mechanical facts (gain, ATR, a reachable sell-limit, and the ATR
     runway when an upside level is known) and forces the advisor to resolve
-    take-profit — bank part of the gain via a whole-share sell-limit, or justify
-    holding with concrete remaining upside — rather than staying silent.
+    take-profit — bank part of the gain, or justify holding with concrete
+    remaining upside — rather than staying silent.
+
+    ``shares`` sizes the action space via _sizing_directive: a fractional or
+    single-share position cannot be trimmed the normal way, and telling the
+    advisor otherwise produces advice the user cannot place.
     """
     runway = atr_runway(price, upside_level, avg_atr)
     limit = suggest_limit(price, avg_atr, cfg.limit_atr_mult)
@@ -206,18 +284,5 @@ def build_guidance(
             "banking at least one share given the gain."
         )
 
-    lines.append(
-        "- WHOLE SHARES ONLY: the user does not trade fractional shares. Your "
-        "take-profit tranche must be a whole-share count (sell 1 share / 2 shares "
-        "/ or the whole position). Respect the ODD-LOT guard: never propose a "
-        "fractional sale, and for a tiny whole-share position prefer HOLD or a "
-        "full SELL over a trim."
-    )
-    lines.append(
-        "- Fill in the 'Take-Profit:' output line with a concrete sell-limit price "
-        "AND the whole-share count to sell there (e.g. 'sell 1 share at 192.50'). "
-        "This is a limit ABOVE the current price the user will pre-place to catch "
-        "an intraday high. Write N/A only if you are genuinely recommending to hold "
-        "the entire position with meaningful upside intact."
-    )
+    lines.append(_sizing_directive(shares, runway, cfg))
     return "\n".join(lines)

@@ -197,3 +197,71 @@ class TestBuildGuidance:
     def test_whole_share_guard_present(self):
         g = build_guidance("NVDA", 16.0, 199.0, 5.0, 200.0, self._cfg())
         assert "WHOLE SHARES ONLY" in g
+
+    def test_unknown_shares_keeps_whole_share_wording(self):
+        # shares=None (the historical call) must not change behaviour.
+        g = build_guidance("NVDA", 16.0, 199.0, 5.0, 200.0, self._cfg())
+        assert "WHOLE SHARES ONLY" in g
+        assert "SINGLE-SHARE" not in g
+        assert "FRACTIONAL POSITION" not in g
+
+
+class TestSizingDirective:
+    """Position size decides which actions are actually placeable (#28)."""
+
+    def _cfg(self):
+        return TakeProfitConfig(
+            enabled=True, floor_gain_pct=10.0, limit_atr_mult=1.5,
+            stretch_atr_mult=3.0, runway_near_atr=1.0, runway_far_atr=2.5,
+        )
+
+    def test_two_shares_uses_normal_whole_share_trim(self):
+        g = build_guidance("NVDA", 16.0, 199.0, 5.0, 200.0, self._cfg(), shares=3)
+        assert "WHOLE SHARES ONLY" in g
+        assert "sell 1 share at 192.50" in g  # the worked example stays
+
+    def test_single_share_at_ceiling_allows_full_exit(self):
+        # runway 0.2 ATR (< runway_near_atr 1.0) → price is at the ceiling
+        g = build_guidance("APH", 12.0, 199.0, 5.0, 200.0, self._cfg(), shares=1)
+        assert "SINGLE-SHARE POSITION" in g
+        assert "sell the whole 1-share position" in g
+        assert "WHOLE SHARES ONLY" not in g
+
+    def test_single_share_with_runway_holds(self):
+        # runway 8 ATRs → real room left → must NOT liquidate to bank a trim.
+        # This is the EMR 2026-08-07 case: +12.9%, 1 share, upside far away.
+        g = build_guidance("EMR", 12.9, 180.0, 5.0, 220.0, self._cfg(), shares=1)
+        assert "SINGLE-SHARE POSITION" in g
+        assert "write N/A" in g
+        assert "sell the whole 1-share position" not in g
+
+    def test_unknown_runway_is_conservative_for_single_share(self):
+        # No upside level → runway None → must not be treated as "at ceiling".
+        g = build_guidance("EMR", 12.9, 180.0, 5.0, None, self._cfg(), shares=1)
+        assert "SINGLE-SHARE POSITION" in g
+        assert "sell the whole 1-share position" not in g
+
+    def test_fractional_position_forbids_a_limit_price(self):
+        # ASML 0.2 shares: a sell-limit needs whole shares, so market only.
+        g = build_guidance("ASML", 12.0, 199.0, 5.0, 200.0, self._cfg(), shares=0.2)
+        assert "FRACTIONAL POSITION (0.2 shares)" in g
+        assert "CANNOT be placed" in g
+        assert "Do NOT propose a limit price" in g
+        assert "market-sell" in g
+        assert "WHOLE SHARES ONLY" not in g
+
+    def test_fractional_partial_sell_is_offered(self):
+        g = build_guidance("ASML", 12.0, 199.0, 5.0, 200.0, self._cfg(), shares=0.2)
+        assert "part or all of the" in g          # trim OR full exit
+        assert "market-sell 0.1 of 0.2 shares" in g
+
+    def test_fractional_with_runway_prefers_holding(self):
+        g = build_guidance("ASML", 12.0, 180.0, 5.0, 220.0, self._cfg(), shares=0.2)
+        assert "prefer holding" in g
+
+    def test_no_longer_claims_user_never_trades_fractional(self):
+        # That premise became false (a real 0.2-share ASML position), and it
+        # contradicted "or the whole position" for a fractional holding.
+        for shares in (None, 0.2, 1, 3):
+            g = build_guidance("X", 12.0, 199.0, 5.0, 200.0, self._cfg(), shares=shares)
+            assert "does not trade fractional shares" not in g

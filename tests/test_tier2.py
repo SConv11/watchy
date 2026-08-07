@@ -6,6 +6,7 @@ calls and stub the state lookup.
 """
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from watchy.config import TickerConfig, WatchyConfig
@@ -98,3 +99,78 @@ class TestTier2TakeProfitWiring:
             _run_ticker(entry, config, store, notifier, position_source)
 
         assert adv.call_args.kwargs["indicator_bundle"] is bundle
+
+
+class TestTieredCadence:
+    """Per-ticker tier2_days (cost/duration control), with two hard exemptions."""
+
+    def _cfg(self, **kw):
+        return WatchyConfig(watchlist=[TickerConfig(ticker="X", **kw)])
+
+    def test_no_cadence_configured_runs_every_day(self):
+        from watchy.tier2 import _should_skip_cadence
+        cfg = self._cfg()
+        tc = cfg.watchlist[0]
+        with patch("watchy.tier2.is_weekly_full_risk_day", return_value=False):
+            for wd in range(7):
+                now = datetime(2026, 8, 3, tzinfo=timezone.utc) + timedelta(days=wd)
+                assert _should_skip_cadence(tc, cfg, now, False) is False
+
+    def test_skips_a_day_not_in_the_list(self):
+        from watchy.tier2 import _should_skip_cadence
+        cfg = self._cfg(tier2_days=["mon", "wed", "fri"])
+        tc = cfg.watchlist[0]
+        with patch("watchy.tier2.is_weekly_full_risk_day", return_value=False):
+            tue = datetime(2026, 8, 4, tzinfo=timezone.utc)   # Tuesday
+            wed = datetime(2026, 8, 5, tzinfo=timezone.utc)   # Wednesday
+            assert _should_skip_cadence(tc, cfg, tue, False) is True
+            assert _should_skip_cadence(tc, cfg, wed, False) is False
+
+    def test_weekly_full_risk_day_is_never_skipped(self):
+        from watchy.tier2 import _should_skip_cadence
+        cfg = self._cfg(tier2_days=["fri"])
+        tc = cfg.watchlist[0]
+        tue = datetime(2026, 8, 4, tzinfo=timezone.utc)
+        with patch("watchy.tier2.is_weekly_full_risk_day", return_value=True):
+            assert _should_skip_cadence(tc, cfg, tue, False) is False
+
+    def test_take_profit_zone_overrides_cadence(self):
+        # A cost optimisation must never be what hides a winner past its floor.
+        from watchy.tier2 import _should_skip_cadence
+        cfg = self._cfg(tier2_days=["fri"])
+        tc = cfg.watchlist[0]
+        tue = datetime(2026, 8, 4, tzinfo=timezone.utc)
+        with patch("watchy.tier2.is_weekly_full_risk_day", return_value=False):
+            assert _should_skip_cadence(tc, cfg, tue, True) is False
+
+    def test_per_ticker_overrides_global(self):
+        from watchy.tier2 import _should_skip_cadence
+        cfg = WatchyConfig(
+            watchlist=[TickerConfig(ticker="X", tier2_days=["tue"])],
+            tier2_days=["mon"],
+        )
+        tc = cfg.watchlist[0]
+        tue = datetime(2026, 8, 4, tzinfo=timezone.utc)
+        with patch("watchy.tier2.is_weekly_full_risk_day", return_value=False):
+            assert _should_skip_cadence(tc, cfg, tue, False) is False
+
+    def test_global_applies_when_ticker_has_none(self):
+        from watchy.tier2 import _should_skip_cadence
+        cfg = WatchyConfig(
+            watchlist=[TickerConfig(ticker="X")], tier2_days=["mon"],
+        )
+        tc = cfg.watchlist[0]
+        tue = datetime(2026, 8, 4, tzinfo=timezone.utc)
+        with patch("watchy.tier2.is_weekly_full_risk_day", return_value=False):
+            assert _should_skip_cadence(tc, cfg, tue, False) is True
+
+    def test_unparseable_day_names_fall_back_to_every_day(self):
+        # A typo must not silently mute a ticker.
+        from watchy.tier2 import _effective_tier2_days
+        cfg = self._cfg(tier2_days=["notaday", "???"])
+        assert _effective_tier2_days(cfg.watchlist[0], cfg) is None
+
+    def test_day_names_are_case_and_length_insensitive(self):
+        from watchy.tier2 import _effective_tier2_days
+        cfg = self._cfg(tier2_days=["Monday", " TUE ", "wed"])
+        assert _effective_tier2_days(cfg.watchlist[0], cfg) == {0, 1, 2}

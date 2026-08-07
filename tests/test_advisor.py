@@ -1,5 +1,7 @@
 """Tests for advisor: prompt formatting and advice parsing (no LLM calls)."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from watchy.advisor import (
@@ -336,3 +338,88 @@ class TestTakeProfitGuidance:
         )
         src = _FakeSource(_held(15.7))  # above global 10 but below per-ticker 20
         assert _take_profit_guidance("NVDA", "target $200", src, cfg, self._bundle()) == ""
+
+
+class TestPostJsonRetry:
+    """Transient HTTP failures must not cost a ticker its whole advice (#28).
+
+    Before this, all three provider calls were a bare urlopen(timeout=30) with
+    no retry: one dropped connection lost the advice card AND the #16
+    derived-target write. Observed 2026-08-07 on NVT/TSM/COHR.
+    """
+
+    def _resp(self, payload=b'{"ok": 1}'):
+        resp = MagicMock()
+        resp.read.return_value = payload
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = lambda s, *a: False
+        return resp
+
+    def test_returns_payload_on_first_try(self):
+        from watchy.advisor import _post_json
+        with patch("urllib.request.urlopen", return_value=self._resp()) as u:
+            assert _post_json("http://x", b"{}", {}) == {"ok": 1}
+        assert u.call_count == 1
+
+    def test_retries_a_dropped_connection_then_succeeds(self):
+        # http.client.RemoteDisconnected is exactly the _read_status failure
+        # seen in the 2026-08-07 tracebacks; urllib does NOT wrap it in URLError.
+        import http.client
+        from watchy.advisor import _post_json
+        side = [http.client.RemoteDisconnected("peer closed"), self._resp()]
+        with patch("urllib.request.urlopen", side_effect=side) as u, \
+             patch("watchy.advisor.time.sleep") as sleep:
+            assert _post_json("http://x", b"{}", {}) == {"ok": 1}
+        assert u.call_count == 2
+        assert sleep.call_count == 1
+
+    def test_retries_a_socket_timeout(self):
+        from watchy.advisor import _post_json
+        with patch("urllib.request.urlopen",
+                   side_effect=[TimeoutError("timed out"), self._resp()]) as u, \
+             patch("watchy.advisor.time.sleep"):
+            assert _post_json("http://x", b"{}", {}) == {"ok": 1}
+        assert u.call_count == 2
+
+    def test_gives_up_after_the_attempt_budget(self):
+        import http.client
+        from watchy.advisor import _post_json
+        boom = http.client.RemoteDisconnected("peer closed")
+        with patch("urllib.request.urlopen", side_effect=boom) as u, \
+             patch("watchy.advisor.time.sleep"):
+            with pytest.raises(http.client.RemoteDisconnected):
+                _post_json("http://x", b"{}", {}, attempts=3)
+        assert u.call_count == 3
+
+    def test_retries_429_and_5xx(self):
+        import urllib.error
+        from watchy.advisor import _post_json
+        for code in (429, 500, 503):
+            err = urllib.error.HTTPError("http://x", code, "boom", {}, None)
+            with patch("urllib.request.urlopen",
+                       side_effect=[err, self._resp()]) as u, \
+                 patch("watchy.advisor.time.sleep"):
+                assert _post_json("http://x", b"{}", {}) == {"ok": 1}
+            assert u.call_count == 2, code
+
+    def test_does_not_retry_a_real_4xx(self):
+        # A bad key or malformed request will never succeed — fail fast instead
+        # of burning the backoff budget.
+        import urllib.error
+        from watchy.advisor import _post_json
+        err = urllib.error.HTTPError("http://x", 401, "unauthorized", {}, None)
+        with patch("urllib.request.urlopen", side_effect=err) as u, \
+             patch("watchy.advisor.time.sleep"):
+            with pytest.raises(urllib.error.HTTPError):
+                _post_json("http://x", b"{}", {})
+        assert u.call_count == 1
+
+    def test_backoff_grows_between_attempts(self):
+        import http.client
+        from watchy.advisor import _post_json
+        boom = http.client.RemoteDisconnected("peer closed")
+        with patch("urllib.request.urlopen", side_effect=boom), \
+             patch("watchy.advisor.time.sleep") as sleep:
+            with pytest.raises(http.client.RemoteDisconnected):
+                _post_json("http://x", b"{}", {}, attempts=3)
+        assert [c.args[0] for c in sleep.call_args_list] == [2.0, 4.0]

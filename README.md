@@ -100,9 +100,18 @@ on the **daily Tier 2** advice for every held name in the zone, plus a **Tier 1
 intraday zone-entry trigger** that fires an advisor-only call (reusing the last
 saved digest — no fresh pipeline) the moment gain crosses the floor between daily
 runs, so the sell-limit is set the same day. **Advisory-only** — Watchy tells you
-the price and share count; you place the limit order (whole shares only, no
-fractional). `floor_gain_pct` is also per-ticker overridable
-(`take_profit_floor_gain_pct`); see the `take_profit` keys in Configuration.
+the price and share count; you place the order. `floor_gain_pct` is also
+per-ticker overridable (`take_profit_floor_gain_pct`); see the `take_profit` keys
+in Configuration.
+
+Position size decides which actions are actually placeable, so the directive
+adapts to the share count:
+
+| Shares | What it can propose |
+|---|---|
+| **≥ 2** | Normal case — trim a whole-share tranche at a sell-limit. |
+| **exactly 1** | A partial trim is arithmetically impossible, so only a full exit or holding. A full exit is offered **only when the ATR runway says price is at the ceiling** (`< runway_near_atr`); with room left it holds, rather than cashing out a winner wholesale. |
+| **< 1 (fractional)** | A sell-limit needs whole shares, so **no limit price is proposed** — only a market sell of part or all of the fractional position. This forfeits the pre-placed-limit safety net (you must act by hand), so it is asked for only when warranted. |
 
 **Tier 2 batch order (#21):** the daily batch runs **held tickers first** (capital
 at risk), then watch-only **nearest-to-target first**, then no-target names last —
@@ -204,8 +213,9 @@ See the full inline comments in `config.yaml` and `secrets.example.yaml`. Key se
 
 | Setting | Purpose |
 |---------|---------|
-| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 proximity gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on the weekly full-risk day or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
+| `watchlist` | Tickers to monitor. Per-ticker overrides: Tier 1 interval, Tier 2 UTC time, `tier2_days` (tiered cadence, see below), optional `target_price`, and a per-ticker `min_price_proximity_pct` override (Tier 2 proximity gate, #15, defaults to the top-level global value; falls back to the #16 auto-derived target, never gated on the weekly full-risk day or when held). Tier 1 is never proximity-gated — it always scans during market hours. |
 | `min_price_proximity_pct` | **Global default** percent for the Tier 2 proximity gate (#15), applied to every watch-only (non-held) ticker; on ordinary trading days skip the daily LLM when price is farther than this from the entry target. Held tickers and the weekly full-risk run (first trading day of the week) always run; Tier 1 is unaffected. Override per-ticker with the same key. Remove to disable globally. |
+| `tier2_days` | **Tiered Tier 2 cadence.** Weekday abbreviations (`["mon","wed","fri"]`) a ticker runs its daily pipeline on; global default applies to any ticker without its own. Omit entirely for **every trading day** (the historical behaviour). One daily 4-analyst run costs roughly the same per ticker whatever the position is worth, so small positions can ride a lighter rotation and the batch still finishes before the 13:30 UTC open. **Never** skips the weekly full-risk day or a position already in the take-profit zone. |
 | `atr_proximity_mult` | Optional ATR-adaptive band (#15 follow-up), global or per-ticker. When set (and ATR data is available), the gate band is `mult × ATR%` (`ATR% = avg_atr_20d / price × 100`) instead of the fixed percent — wider for volatile names, narrower for calm ones. Clamped to `[proximity_pct_floor, proximity_pct_ceiling]` (default 4–20%); falls back to `min_price_proximity_pct` without ATR data. Calibrate with `scripts/calibrate_atr_proximity.py`. |
 | `take_profit` | Take-profit / anti-round-trip (#28), **enabled** (`enabled: true` by default; set `false` to turn off). Keys: `floor_gain_pct` (unrealized-gain % that arms the zone, default 10; per-ticker override via `take_profit_floor_gain_pct`), `limit_atr_mult`/`stretch_atr_mult` (size the suggested sell-limit as `price + mult×ATR`, default 1.5/3.0), `runway_near_atr`/`runway_far_atr` (ATR-runway band edges, default 1.0/2.5), `cooldown_h` (intraday zone-entry trigger cooldown, default 24). A held winner past the floor gets a sell-limit directive on the daily Tier 2 advice and a same-day Tier 1 intraday trigger. Advisory-only, whole shares. |
 | `signal_thresholds` | Detection thresholds for RSI, volume, ATR, etc. |

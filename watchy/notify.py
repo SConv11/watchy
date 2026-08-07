@@ -280,6 +280,23 @@ class TelegramNotifier:
                 lines.append(detail)
         return self.send("\n".join(lines))
 
+    def advisor_failed(self, ticker: str, context: str) -> bool:
+        """Notify that the advisor call failed for a ticker (#28 follow-up).
+
+        get_advice swallows its own exception and returns None, so a failure used
+        to be completely silent: the pipeline still "succeeded", no advice card
+        was sent, and the #16 derived-target write was skipped. Three of these
+        went unnoticed for a day on 2026-08-07. Surfacing it costs one short
+        message and makes the gap visible the same day.
+        """
+        return self.send(
+            f"<b>⚠ Advisor Failed</b> — ${self._escape_html(ticker)}\n"
+            f"<b>Context:</b> {self._escape_html(context)}\n"
+            "The analysis ran, but no position advice could be synthesized "
+            "(and no target was derived for the proximity gate). See the journal "
+            "for the traceback."
+        )
+
     def error(self, context: str, error: Exception) -> bool:
         """Notify on critical errors."""
         return self.send(
