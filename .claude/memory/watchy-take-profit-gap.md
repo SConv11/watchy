@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: f643c967-dcdd-4f5f-8361-42190c001e1e
-  modified: 2026-07-27T09:53:50.867Z
+  modified: 2026-08-07T15:29:21.465Z
 ---
 
 # 用户交易痛点 & advisor 止盈缺口
@@ -93,13 +93,51 @@ NVDA +4.6%，全都够不到 floor 10%（Schwab live 正常、cost basis 正常�
 **核心链路全对。** dry-run 脚本模板见本条历史（load_config→改 c.take_profit.floor_gain_pct→
 compute_indicators→load_digest→get_advice）；注意 IndicatorBundle 字段是 `current_price` 不是 `price`。
 
-**🐛 发现真 bug（待修）：限价锚定价源不一致**。`advisor.py:144-148` 有 bundle 时 `price =
-indicator_bundle.current_price`（yfinance，EMR=145.33），但 gain 来自 Schwab（live last=148.72）——
-差 $3.40≈0.84 ATR。结果限价 157.44 而非 160.84，**偏低=更容易成交=比预期卖便宜**，对"别卖太便宜"
-这个目标方向性错误。修法：优先 `pos.current_price`(live)，bundle 当 fallback。
+**🐛 限价锚定价源不一致 → ✅ 已修（commit `461e476`）**。原 `advisor.py` 有 bundle 时 `price =
+indicator_bundle.current_price`（yfinance，EMR=145.33），但 gain 来自 Schwab（live=148.72）——
+差 $3.40≈0.84 ATR，限价偏低=卖便宜，方向性错误。现改走 `tpmod.anchor_price(pos, bundle)`：
+**优先持仓 live mark（gain 的同一价源），bundle 只当 fallback**；ATR 仍只能取自 bundle。
 
-**#28 仍 open**：核心已验证，但 **Tier 1 zone-entry 转换 + `notify.take_profit_alert` 仍未实跑过**
-（要等真有票越 10%，或专门造一次）。
+## 🏁 2026-08-07 实盘验证：Tier 2 + Tier 1 两条路都已确认 live 触发
+
+VPS 状态：`461e476`（= origin/main 最新）、`git status` 干净（config.yaml 已收敛、不再 dirty）、
+`take_profit.enabled: true` / `floor_gain_pct: 10.0`。
+
+**Tier 2 主触发已证实（APH，2026-08-06，+11.8% > floor 10）**：Telegram 卡片 `Trigger: Scheduled
+Daily Run`（=`_signal_label("scheduled_daily")`，Tier 2 而非 Tier 1），advisor 正文原话
+*"the **mechanical take-profit trigger** is technically active with an **11.8%** unrealized gain"*
+——这句复述的正是 `build_guidance()` 注入的 `TAKE-PROFIT ZONE ACTIVE (mechanical trigger — ground
+truth...)` 抬头 + 机械 gain 数字，**LLM 不可能凭空产出**，即 `tier2.py:211 → get_advice(
+indicator_bundle=) → advisor.py:190` 全链路跑通。
+
+**Tier 1 zone-entry 也首次实跑（AVGO，2026-08-07 21:35，+10.5%）**：`💰 Take-Profit Zone — $AVGO`
+即 `notify.take_profit_alert()` 抬头原文，带 `Sell-limit: sell 1 share at 454.16`。
+**顺带证明锚定修复生效**：Schwab live 430.57 + 1.5×ATR 15.73 = 454.165 → 输出 454.16，
+锚在 broker mark（与 gain 同源）而非 yfinance bundle 价。
+
+**⚠️ 结构性限制：小仓位上止盈天然失效 → ✅ 已修（commit `046b1cf`，2026-08-07）**
+
+原因：`build_guidance()` 里 runway-large 分支和 odd-lot 护栏**双重导向 HOLD**，模型写 `N/A`，被
+`_has_take_profit()` 过滤 → Telegram 一个字没有。8/7 实例：EMR +12.9%/1 股、APH +10.8%/1 股 都是零输出，
+**只有 2 股的 AVGO 出了单**（`sell 1 share at 454.16`）。更糟：EMR 那张卡还建议**加到第二股**。
+另外原文写着 "the user does not trade fractional shares" —— **这个前提是假的**（ASML 实持 0.2 股），
+且与同段的 "or the whole position" 自相矛盾。
+
+**修法 = 股数三档**（新增 `take_profit._sizing_directive`，`build_guidance(..., shares=)`）：
+
+| 股数 | 可提议的动作 |
+|---|---|
+| **≥2** | 现状：限价减 N 整股 |
+| **==1** | 部分减仓在算术上不存在 → 只有全清或持有。**仅当 ATR runway < `runway_near_atr`（贴顶）才允许提议全清**，有空间就 HOLD（= 用户拍板的 "A+runway 护栏"） |
+| **<1 碎股** | 限价单需要整股 → **不给限价**，只给市价"减仓 or 全清"文字指令。用户确认：0.2 股**不能挂限价单**，但**可以部分卖出 0.1 股** |
+
+碎股档的代价要记住：**丢掉了"预挂限价单自动抓日内高点"这个 #28 的核心机制**，退化成需要手动执行的提醒。
+
+**待查（低优先）**：用户贴的 APH 卡片在同一时间戳 20:34 出现两次。可能只是粘贴重复；若 Telegram
+真收到两条相同 Tier 2 卡片则是 duplicate-notify bug。核验：
+`journalctl -u watchy --since '2026-08-06' | grep -c 'Advisor for APH'`（应为 1）。
+
+**#28 剩余**：核心 + 两条触发路径均已实盘验证；可考虑结单。
 
 **未做（deferred）**：机械 trailing-stop（撤销）；一等公民阻力位提取（现正则尽力）；触发时的 full-pipeline hybrid；
 Schwab 自动下单。= **#17 候选 A 卖出侧实例**（#26 买入侧无关）。
