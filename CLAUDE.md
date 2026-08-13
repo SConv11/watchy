@@ -39,15 +39,17 @@ this range — per-ticker time moves whenever the DeepSeek flash model is retrai
 - Daemon runs under systemd (`watchy.service`) as user `watchy`, env = `trading` pyenv
   (`/home/watchy/.pyenv/versions/3.11.9/envs/trading/bin/python`). Run repo scripts with THAT python
   (the bare `python` shim lacks `yfinance_cache`).
-- Tier 1: every 30 min/ticker (jitter ±5 min, market-hours gated, event-driven). Tier 2: 10:00 UTC on
+- Tier 1: every 30 min/ticker (jitter ±5 min, market-hours gated, event-driven). Tier 2: 10:02 UTC on
   **US trading days only** (weekends AND NYSE holidays skipped — there is no weekend run). The full 3-way
   risk debate rides the **first trading session of each week** (normally Monday, shifting to Tuesday on a
   holiday — `market_calendar.is_weekly_full_risk_day`); other days run 4 analysts with simplified risk.
-- **Why 10:00 UTC**: it is the earliest start that clears DeepSeek's announced peak surcharge (2× on
-  01:00–04:00 & 06:00–10:00 UTC = Beijing 09:00–12:00 & 14:00–18:00). Announced 2026-06-30, **not active**
-  as of 2026-08-07, but starting earlier is not free — 08:00 would put the whole batch inside the window.
-  The old V3/R1 off-peak *discount* is gone (retired with those models 2026-07-24). The batch should also
-  finish before the 13:30 UTC market open; `tier2_days` (below) is what keeps it short enough.
+- **Why 10:02 UTC**: DeepSeek's peak/off-peak billing goes live **2026-08-16 16:00 UTC** — peak = 01:00–04:00
+  & 06:00–10:00 UTC (Beijing 09:00–12:00 & 14:00–18:00) at **2× the off-peak rate**. 10:02 is the earliest
+  start that clears it, with two minutes of deliberate margin because DeepSeek does not document whether
+  10:00 is the last peak minute or the first off-peak one. Starting earlier is not free — 08:00 would sit
+  inside the window outright. Tier 1 (13:30–20:00 UTC) is off-peak too. The old V3/R1 off-peak *discount* is
+  gone (retired with those models 2026-07-24). The batch should also finish before the 13:30 UTC market
+  open; `tier2_days` (below) is what keeps it short enough.
 - **Tiered Tier 2 cadence** (`tier2_days`, per-ticker in `config.yaml`, global default = every day): one
   daily 4-analyst pipeline costs ~$9.6/yr per ticker regardless of position size, so small positions run on
   a lighter rotation. The weekly full-risk day and any position already in the take-profit zone always run,

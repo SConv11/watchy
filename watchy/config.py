@@ -14,12 +14,15 @@ import yaml
 class TickerConfig:
     ticker: str
     tier1_interval_h: float = 0.5
-    # 10:00 UTC = 06:00 ET. Earliest start that still clears DeepSeek's announced
-    # peak surcharge (2x on 01:00-04:00 and 06:00-10:00 UTC; announced 2026-06-30,
-    # not active as of 2026-08-07). Starting earlier is NOT free — 08:00 would put
-    # the whole batch inside that window. The batch should also finish before the
-    # 13:30 UTC market open; see tier2_days for the cadence that keeps it short.
-    tier2_time_utc: str = "10:00"
+    # 10:02 UTC = 06:02 ET, i.e. Beijing 18:02. DeepSeek's peak/off-peak billing
+    # goes live 2026-08-16 16:00 UTC: peak = 01:00-04:00 and 06:00-10:00 UTC
+    # (Beijing 09:00-12:00 and 14:00-18:00) at 2x the off-peak rate. The two
+    # minutes are deliberate margin — DeepSeek does not document whether 10:00 is
+    # the last peak minute or the first off-peak one, and being wrong doubles the
+    # whole batch. Starting earlier is NOT free: 08:00 would sit inside the window
+    # outright. The batch should also finish before the 13:30 UTC market open; see
+    # tier2_days for the cadence that keeps it short.
+    tier2_time_utc: str = "10:02"
     # Optional tiered cadence: weekday abbreviations this ticker runs Tier 2 on
     # ("mon".."fri", case-insensitive). None inherits WatchyConfig.tier2_days, and
     # a global None means "every trading day" (the historical behaviour). Lets the
