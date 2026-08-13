@@ -149,8 +149,8 @@ lightweight LLM (Gemini by default) to synthesize a **condensed analysis digest*
 (the decision chain + each analyst's summary tail, not the full prose) + position
 into actionable advice, and pushes a natural-language summary to Telegram. The
 advisor's own token usage is logged as a `GEMINICOST` line; its thinking level is
-per-tier (`llm.gemini_thinking_tier1` = off, `llm.gemini_thinking_tier2` = low) in
-`secrets.yaml`.
+per-tier (`llm.gemini_thinking_tier1` and `llm.gemini_thinking_tier2`, both `low`)
+in `secrets.yaml`.
 
 **The position source (#4) is layered, so it keeps working when Schwab can't
 refresh:**

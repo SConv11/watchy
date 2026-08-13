@@ -88,10 +88,13 @@ class LLMConfig:
     # gemini-3.5/3.6-flash control thinking with thinkingConfig.thinkingLevel and
     # rejects the legacy thinkingBudget (HTTP 400), so "off" maps to minimal (the
     # cheapest tier; observed ~0 thinking tokens). Valid: off / minimal / low /
-    # medium / high. Tier 1 advice rides frequent intraday signals → keep it cheap
-    # (off); Tier 2 is the daily read → low (measured: ~$0.016/call for the extra
-    # reasoning at gemini-flash's $7.50/1M, decision unchanged but richer detail).
-    gemini_thinking_tier1: str = "off"
+    # medium / high. BOTH tiers run "low". Tier 1 was "off" until 2026-08-13, but
+    # it carries the intraday take-profit zone-entry advice whose `Take-Profit:`
+    # line is regex-extracted, and minimal is measurably the worst tier for that:
+    # AA scores gemini-3.5-flash (minimal) at 47.3% IFBench / 58.3% AA-LCR / 74%
+    # hallucination, vs 74.6% / 79.7% / 62% one tier up. ~$8/yr for all of Tier 1.
+    # Tier 2 stays low — medium was measured as no better for the decision.
+    gemini_thinking_tier1: str = "low"
     gemini_thinking_tier2: str = "low"
 
 

@@ -425,8 +425,12 @@ _GEMINI_THINK_HEADROOM = 2048
 # gemini-3.5-flash prices, USD per 1M tokens (update from ai.google.dev/pricing).
 # Thinking tokens are billed at the output rate. Used only for the greppable
 # GEMINICOST log estimate — the token counts logged are exact.
+# KEEP IN SYNC WITH llm.model — the tiers differ: 3.5-flash is $1.50/$9.00,
+# 3.6-flash $1.50/$7.50. (Held $7.50 while the advisor ran 3.6; restored to
+# $9.00 on 2026-08-13 when it rolled back to 3.5, having silently
+# under-reported GEMINICOST by ~17% in between.)
 _GEMINI_PRICE_IN = 1.50
-_GEMINI_PRICE_OUT = 7.50
+_GEMINI_PRICE_OUT = 9.00
 
 
 def _gemini_cost_usd(in_tok: int, out_tok: int, think_tok: int) -> float:

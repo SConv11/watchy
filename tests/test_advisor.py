@@ -32,7 +32,7 @@ class TestGeminiCost:
     def test_thinking_billed_as_output(self):
         # thinking tokens cost the same as visible output tokens
         assert _gemini_cost_usd(0, 0, 1_000_000) == _gemini_cost_usd(0, 1_000_000, 0)
-        assert abs(_gemini_cost_usd(0, 0, 1_000_000) - 7.50) < 1e-9
+        assert abs(_gemini_cost_usd(0, 0, 1_000_000) - 9.00) < 1e-9
 
     def test_zero(self):
         assert _gemini_cost_usd(0, 0, 0) == 0.0
