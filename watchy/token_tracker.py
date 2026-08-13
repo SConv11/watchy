@@ -15,9 +15,10 @@ graph passes the handler to both LLM constructors (see trading_graph.py), so a
 single instance sees every call. Every handler body is exception-safe: a bug
 here must never break a live pipeline run, only lose a measurement.
 
-Prices are the DeepSeek V4 published rates (USD per 1M tokens). Absolute USD is a
-*relative proxy* for the CNY bill — what we care about is the per-component
-*share*, which is currency-independent.
+Prices are the DeepSeek V4 published rates (USD per 1M tokens), selected by call
+time since DeepSeek went peak/off-peak on 2026-08-16 — see ``_prices_at``.
+Absolute USD is a *relative proxy* for the CNY bill (DeepSeek invoices in CNY);
+what we care about is the per-component *share*, which is currency-independent.
 """
 
 from __future__ import annotations
@@ -25,16 +26,51 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # DeepSeek V4 prices, USD per 1M tokens (see watchy-api-cost-baseline memory).
 # cache-miss input / cache-hit input / output.
-_PRICES = {
+#
+# DeepSeek replaced flat pricing with peak/off-peak billing at 2026-08-16 16:00
+# UTC: peak = 01:00-04:00 and 06:00-10:00 UTC (Beijing 09:00-12:00 and
+# 14:00-18:00) at 2x the off-peak rate. Off-peak is still ~1.9x the old flat
+# price for Watchy's output-heavy mix, since output rose 2.25x vs input's 1.5x.
+#
+# Watchy is scheduled entirely off-peak (Tier 2 at 10:02 UTC, Tier 1 during the
+# 13:30-20:00 UTC session), so the peak table should never be used. It is priced
+# anyway to keep TOKENCOST self-checking: if a schedule change ever drifts a
+# batch into the window, the logged cost doubles instead of quietly lying.
+_PRICING_CHANGE = datetime(2026, 8, 16, 16, 0, tzinfo=timezone.utc)
+
+_PRICES_FLAT = {  # before _PRICING_CHANGE; kept so old runs stay comparable
     "pro": {"in": 0.435, "cache": 0.003625, "out": 0.87},
     "flash": {"in": 0.14, "cache": 0.0028, "out": 0.28},
 }
+_PRICES_OFFPEAK = {
+    "pro": {"in": 0.66, "cache": 0.022, "out": 1.98},
+    "flash": {"in": 0.22, "cache": 0.007, "out": 0.66},
+}
+_PRICES_PEAK = {  # 2x off-peak
+    "pro": {"in": 1.32, "cache": 0.044, "out": 3.96},
+    "flash": {"in": 0.44, "cache": 0.014, "out": 1.32},
+}
+
+# Hours whose whole 60 minutes are inside a peak window. DeepSeek does not
+# document whether the 04:00 / 10:00 boundaries are inclusive, which is exactly
+# why tier2_time_utc is 10:02 rather than 10:00 — Watchy never depends on the
+# answer, so the optimistic reading is safe to encode here.
+_PEAK_HOURS_UTC = frozenset({1, 2, 3, 6, 7, 8, 9})
+
+
+def _prices_at(now: datetime | None = None) -> dict[str, dict[str, float]]:
+    """Price table in effect at *now* (default: this instant, UTC)."""
+    now = now or datetime.now(timezone.utc)
+    if now < _PRICING_CHANGE:
+        return _PRICES_FLAT
+    return _PRICES_PEAK if now.hour in _PEAK_HOURS_UTC else _PRICES_OFFPEAK
 
 
 def _price_tier(model: str) -> str:
@@ -43,7 +79,7 @@ def _price_tier(model: str) -> str:
 
 
 def _cost_usd(model: str, input_tok: int, cached_tok: int, output_tok: int) -> float:
-    p = _PRICES[_price_tier(model)]
+    p = _prices_at()[_price_tier(model)]
     miss = max(input_tok - cached_tok, 0)
     return (miss * p["in"] + cached_tok * p["cache"] + output_tok * p["out"]) / 1_000_000
 

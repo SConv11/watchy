@@ -1,12 +1,17 @@
 """Tests for the TokenCostTracker callback: usage extraction, attribution, cost."""
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from watchy.token_tracker import (
+    _PRICES_FLAT,
+    _PRICES_OFFPEAK,
+    _PRICES_PEAK,
     TokenCostTracker,
     _cost_usd,
     _extract_usage,
     _price_tier,
+    _prices_at,
 )
 
 
@@ -34,16 +39,54 @@ class TestPriceTier:
         assert _price_tier("something-unknown") == "flash"
 
 
+class TestPricingWindow:
+    """DeepSeek went peak/off-peak at 2026-08-16 16:00 UTC (2x on 01:00-04:00
+    and 06:00-10:00 UTC). These pin the table selection to explicit instants so
+    they don't silently change meaning as the clock moves."""
+
+    def test_flat_before_cutover(self):
+        before = datetime(2026, 8, 16, 15, 59, tzinfo=timezone.utc)
+        assert _prices_at(before) is _PRICES_FLAT
+        assert _prices_at(before)["flash"]["out"] == 0.28
+
+    def test_offpeak_after_cutover(self):
+        after = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+        assert _prices_at(after) is _PRICES_OFFPEAK
+        assert _prices_at(after)["flash"]["out"] == 0.66
+
+    def test_peak_hours_priced_double(self):
+        for hour in (1, 2, 3, 6, 7, 8, 9):
+            peak = datetime(2026, 8, 17, hour, 30, tzinfo=timezone.utc)
+            assert _prices_at(peak) is _PRICES_PEAK
+        for tier in ("pro", "flash"):
+            for key in ("in", "cache", "out"):
+                assert _PRICES_PEAK[tier][key] == 2 * _PRICES_OFFPEAK[tier][key]
+
+    def test_tier2_start_is_off_peak(self):
+        # tier2_time_utc defaults to 10:02 precisely to clear the 06:00-10:00
+        # window; if this ever fails the whole batch is being billed at 2x.
+        assert _prices_at(
+            datetime(2026, 8, 17, 10, 2, tzinfo=timezone.utc)
+        ) is _PRICES_OFFPEAK
+
+    def test_tier1_session_is_off_peak(self):
+        for hour in (13, 16, 19):
+            assert _prices_at(
+                datetime(2026, 8, 17, hour, 0, tzinfo=timezone.utc)
+            ) is _PRICES_OFFPEAK
+
+
 class TestCost:
     def test_flash_cost_math(self):
-        # 1M miss input + 1M output, no cache → 0.14 + 0.28 = 0.42
-        assert abs(_cost_usd("flash", 1_000_000, 0, 1_000_000) - 0.42) < 1e-9
+        p = _prices_at()["flash"]
+        expected = p["in"] + p["out"]  # 1M miss input + 1M output, no cache
+        assert abs(_cost_usd("flash", 1_000_000, 0, 1_000_000) - expected) < 1e-9
 
     def test_cache_hit_is_cheaper(self):
         full = _cost_usd("flash", 1_000_000, 0, 0)
         cached = _cost_usd("flash", 1_000_000, 1_000_000, 0)
         assert cached < full
-        assert abs(cached - 0.0028) < 1e-9
+        assert abs(cached - _prices_at()["flash"]["cache"]) < 1e-9
 
     def test_pro_dearer_than_flash(self):
         assert _cost_usd("pro", 1_000_000, 0, 1_000_000) > _cost_usd(
