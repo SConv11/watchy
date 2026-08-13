@@ -309,7 +309,8 @@ class TestTakeProfitGuidance:
             "NVDA", "resistance at $200", src, self._config(enabled=True), self._bundle()
         )
         assert "TAKE-PROFIT ZONE ACTIVE" in out
-        assert "+15.7%" in out
+        assert "+10% take-profit floor" in out   # the arming fact...
+        assert "15.7" not in out                 # ...but never the magnitude (#30)
 
     def test_anchors_on_the_broker_mark_not_the_bundle(self):
         """Regression: the limit followed the (staler, lower) yfinance quote.
@@ -338,6 +339,36 @@ class TestTakeProfitGuidance:
         )
         src = _FakeSource(_held(15.7))  # above global 10 but below per-ticker 20
         assert _take_profit_guidance("NVDA", "target $200", src, cfg, self._bundle()) == ""
+
+
+class TestStandingPromptGainAnchor:
+    """The always-on take-profit clause must not anchor on the gain % (#30).
+
+    This clause ships on EVERY advisor call, gate armed or not, and it used to
+    point the model at the position block's "Unrealized P&L" with a "roughly
+    15%+" anchor. Under highest-cost-first selling that figure ratchets up with
+    each trim at an unchanged price, so it cannot be a threshold.
+    """
+
+    def test_no_numeric_gain_anchor(self):
+        from watchy.advisor import ADVISOR_PROMPT
+
+        assert "15%+" not in ADVISOR_PROMPT
+        assert "MEANINGFUL\nunrealized gain" not in ADVISOR_PROMPT
+
+    def test_carries_the_hifo_caveat(self):
+        from watchy.advisor import ADVISOR_PROMPT
+
+        assert "COST-BASIS CAVEAT" in ADVISOR_PROMPT
+        assert "highest-cost-first" in ADVISOR_PROMPT
+
+    def test_still_asks_for_trims_on_extended_winners(self):
+        # Removing the magnitude must not remove the willingness to bank a gain:
+        # the user's pain is selling too late, not too early.
+        from watchy.advisor import ADVISOR_PROMPT
+
+        assert "IN PROFIT" in ADVISOR_PROMPT
+        assert "lean toward TRIM" in ADVISOR_PROMPT
 
 
 class TestPostJsonRetry:

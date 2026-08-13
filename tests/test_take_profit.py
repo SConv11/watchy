@@ -1,5 +1,7 @@
 """Tests for take-profit core logic (#28) — pure functions, no LLM."""
 
+import re
+
 from watchy.config import TakeProfitConfig, TickerConfig, WatchyConfig
 from watchy.indicators import IndicatorBundle
 from watchy.positions import Position
@@ -12,8 +14,8 @@ from watchy.take_profit import (
     extract_upside_level,
     is_in_zone,
     position_gain_pct,
-    was_trimmed,
     suggest_limit,
+    was_trimmed,
 )
 
 
@@ -201,38 +203,81 @@ class TestBuildGuidance:
 
     def test_small_runway_says_bank_now(self):
         # price 199, ceiling 200, ATR 5 → runway 0.2 ATR (< 1) → at the ceiling
-        g = build_guidance("NVDA", 16.0, 199.0, 5.0, 200.0, self._cfg())
+        g = build_guidance("NVDA", 199.0, 5.0, 200.0, self._cfg())
         assert "TAKE-PROFIT ZONE ACTIVE" in g
-        assert "+16.0%" in g
         assert "RUNWAY IS SMALL" in g
         assert "Take-Profit:" in g  # instructs filling the output line
 
     def test_large_runway_says_let_it_run(self):
         # price 180, ceiling 220, ATR 5 → runway 8 ATRs (> 2.5) → room to run
-        g = build_guidance("NVDA", 12.0, 180.0, 5.0, 220.0, self._cfg())
+        g = build_guidance("NVDA", 180.0, 5.0, 220.0, self._cfg())
         assert "RUNWAY IS LARGE" in g
         assert "stretch limit" in g
 
     def test_moderate_runway(self):
         # price 188, ceiling 200, ATR 5 → runway 2.4 (between 1 and 2.5)
-        g = build_guidance("NVDA", 14.0, 188.0, 5.0, 200.0, self._cfg())
+        g = build_guidance("NVDA", 188.0, 5.0, 200.0, self._cfg())
         assert "RUNWAY IS MODERATE" in g
 
     def test_unknown_upside_degrades_to_atr_limit(self):
-        g = build_guidance("NVDA", 14.0, 188.0, 5.0, None, self._cfg())
+        g = build_guidance("NVDA", 188.0, 5.0, None, self._cfg())
         assert "runway is unknown" in g.lower()
         assert "good-day-reachable" in g
 
     def test_whole_share_guard_present(self):
-        g = build_guidance("NVDA", 16.0, 199.0, 5.0, 200.0, self._cfg())
+        g = build_guidance("NVDA", 199.0, 5.0, 200.0, self._cfg())
         assert "WHOLE SHARES ONLY" in g
 
     def test_unknown_shares_keeps_whole_share_wording(self):
         # shares=None (the historical call) must not change behaviour.
-        g = build_guidance("NVDA", 16.0, 199.0, 5.0, 200.0, self._cfg())
+        g = build_guidance("NVDA", 199.0, 5.0, 200.0, self._cfg())
         assert "WHOLE SHARES ONLY" in g
         assert "SINGLE-SHARE" not in g
         assert "FRACTIONAL POSITION" not in g
+
+
+class TestGainMagnitudeIsNotADecisionInput:
+    """The gain % arms the gate and goes no further (#30).
+
+    HIFO selling makes it ratchet upward with every trim at an unchanged price,
+    so it cannot anchor a limit or a tranche size.
+    """
+
+    def _cfg(self):
+        return TakeProfitConfig(
+            enabled=True, floor_gain_pct=10.0, limit_atr_mult=1.5,
+            stretch_atr_mult=3.0, runway_near_atr=1.0, runway_far_atr=2.5,
+        )
+
+    def test_no_gain_percentage_anywhere_in_the_directive(self):
+        # Every branch: at the ceiling, room to run, and no ceiling found.
+        for upside in (200.0, 260.0, None):
+            for shares in (None, 0.2, 1, 3):
+                g = build_guidance("NVDA", 199.0, 5.0, upside, self._cfg(), shares=shares)
+                # The floor itself may be quoted; a measured gain never is.
+                pcts = set(re.findall(r"[-+]?\d+(?:\.\d+)?%", g)) - {"+10%", "10%"}
+                assert not pcts, f"gain magnitude leaked: {pcts}"
+
+    def test_floor_crossing_is_still_stated(self):
+        # Dropping the magnitude must not drop the urgency — the user's pain is
+        # selling too late, so the directive still demands a resolution.
+        g = build_guidance("NVDA", 199.0, 5.0, 200.0, self._cfg())
+        assert "+10% take-profit floor" in g
+        assert "RESOLVE take-profit" in g
+        assert "not an option" in g
+
+    def test_explains_why_the_position_block_percentage_is_untrustworthy(self):
+        # The number is still visible in the injected position block, so the
+        # directive has to neutralise it explicitly or the LLM will use it.
+        g = build_guidance("NVDA", 199.0, 5.0, 200.0, self._cfg())
+        assert "highest-cost-first" in g
+        assert "position block must not drive your answer" in g
+
+    def test_no_ceiling_fallback_does_not_reason_from_the_gain(self):
+        g = build_guidance("NVDA", 188.0, 5.0, None, self._cfg())
+        assert "given the gain" not in g
+        assert "runway is unknown" in g.lower()
+        assert "floor is already crossed" in g
 
 
 class TestSizingDirective:
@@ -245,13 +290,13 @@ class TestSizingDirective:
         )
 
     def test_two_shares_uses_normal_whole_share_trim(self):
-        g = build_guidance("NVDA", 16.0, 199.0, 5.0, 200.0, self._cfg(), shares=3)
+        g = build_guidance("NVDA", 199.0, 5.0, 200.0, self._cfg(), shares=3)
         assert "WHOLE SHARES ONLY" in g
         assert "sell 1 share at 192.50" in g  # the worked example stays
 
     def test_single_share_at_ceiling_allows_full_exit(self):
         # runway 0.2 ATR (< runway_near_atr 1.0) → price is at the ceiling
-        g = build_guidance("APH", 12.0, 199.0, 5.0, 200.0, self._cfg(), shares=1)
+        g = build_guidance("APH", 199.0, 5.0, 200.0, self._cfg(), shares=1)
         assert "SINGLE-SHARE POSITION" in g
         assert "sell the whole 1-share position" in g
         assert "WHOLE SHARES ONLY" not in g
@@ -259,20 +304,20 @@ class TestSizingDirective:
     def test_single_share_with_runway_holds(self):
         # runway 8 ATRs → real room left → must NOT liquidate to bank a trim.
         # This is the EMR 2026-08-07 case: +12.9%, 1 share, upside far away.
-        g = build_guidance("EMR", 12.9, 180.0, 5.0, 220.0, self._cfg(), shares=1)
+        g = build_guidance("EMR", 180.0, 5.0, 220.0, self._cfg(), shares=1)
         assert "SINGLE-SHARE POSITION" in g
         assert "write N/A" in g
         assert "sell the whole 1-share position" not in g
 
     def test_unknown_runway_is_conservative_for_single_share(self):
         # No upside level → runway None → must not be treated as "at ceiling".
-        g = build_guidance("EMR", 12.9, 180.0, 5.0, None, self._cfg(), shares=1)
+        g = build_guidance("EMR", 180.0, 5.0, None, self._cfg(), shares=1)
         assert "SINGLE-SHARE POSITION" in g
         assert "sell the whole 1-share position" not in g
 
     def test_fractional_position_forbids_a_limit_price(self):
         # ASML 0.2 shares: a sell-limit needs whole shares, so market only.
-        g = build_guidance("ASML", 12.0, 199.0, 5.0, 200.0, self._cfg(), shares=0.2)
+        g = build_guidance("ASML", 199.0, 5.0, 200.0, self._cfg(), shares=0.2)
         assert "FRACTIONAL POSITION (0.2 shares)" in g
         assert "CANNOT be placed" in g
         assert "Do NOT propose a limit price" in g
@@ -280,17 +325,17 @@ class TestSizingDirective:
         assert "WHOLE SHARES ONLY" not in g
 
     def test_fractional_partial_sell_is_offered(self):
-        g = build_guidance("ASML", 12.0, 199.0, 5.0, 200.0, self._cfg(), shares=0.2)
+        g = build_guidance("ASML", 199.0, 5.0, 200.0, self._cfg(), shares=0.2)
         assert "part or all of the" in g          # trim OR full exit
         assert "market-sell 0.1 of 0.2 shares" in g
 
     def test_fractional_with_runway_prefers_holding(self):
-        g = build_guidance("ASML", 12.0, 180.0, 5.0, 220.0, self._cfg(), shares=0.2)
+        g = build_guidance("ASML", 180.0, 5.0, 220.0, self._cfg(), shares=0.2)
         assert "prefer holding" in g
 
     def test_no_longer_claims_user_never_trades_fractional(self):
         # That premise became false (a real 0.2-share ASML position), and it
         # contradicted "or the whole position" for a fractional holding.
         for shares in (None, 0.2, 1, 3):
-            g = build_guidance("X", 12.0, 199.0, 5.0, 200.0, self._cfg(), shares=shares)
+            g = build_guidance("X", 199.0, 5.0, 200.0, self._cfg(), shares=shares)
             assert "does not trade fractional shares" not in g

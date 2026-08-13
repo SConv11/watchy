@@ -5,8 +5,11 @@ user's #1 pain: a position runs up, the gain isn't banked, and it round-trips.
 
 The mechanical footprint is deliberately tiny. It decides only *when* to wake the
 advisor up (unrealized gain crossed the floor) and hands it ground-truth facts —
-the gain, the ATR "runway" left to the analysts' upside level, and a reachable
+the price, the ATR "runway" left to the analysts' upside level, and a reachable
 sell-limit price. The LLM then sizes the trim (whole shares) and sets the limit.
+The gain's magnitude is NOT among those facts: highest-cost-first selling makes
+it ratchet upward with every trim at an unchanged price (#30), so it arms the
+gate and nothing more.
 It is NOT asked to detect the top itself; that judgement is inconsistent (the
 same data reads HOLD on one model and ADD on another) and the analysis often
 still calls a top "strong". Feeding a mechanical fact sidesteps that. See #28.
@@ -250,7 +253,6 @@ def _sizing_directive(
 
 def build_guidance(
     ticker: str,
-    gain_pct: float,
     price: float | None,
     avg_atr: float | None,
     upside_level: float | None,
@@ -259,10 +261,18 @@ def build_guidance(
 ) -> str:
     """The explicit take-profit directive injected into the advisor prompt (#28).
 
-    Carries the mechanical facts (gain, ATR, a reachable sell-limit, and the ATR
+    Carries the mechanical facts (price, ATR, a reachable sell-limit, and the ATR
     runway when an upside level is known) and forces the advisor to resolve
     take-profit — bank part of the gain, or justify holding with concrete
     remaining upside — rather than staying silent.
+
+    The SIZE of the gain is deliberately not a parameter (#30). Whether the floor
+    was crossed is the arming condition and stays in the caller; the magnitude is
+    not a decision input, because highest-cost-first selling means each trim
+    strips the dearest lot and inflates the reported gain on the shares that
+    remain at an unchanged price — it ratchets up with every trim this directive
+    recommends. Keeping it out of the signature makes that structural rather than
+    a convention. The journal still records it (advisor._take_profit_guidance).
 
     ``shares`` sizes the action space via _sizing_directive: a fractional or
     single-share position cannot be trimmed the normal way, and telling the
@@ -275,9 +285,17 @@ def build_guidance(
     lines = [
         "TAKE-PROFIT ZONE ACTIVE (mechanical trigger — ground truth, not an "
         "analyst opinion):",
-        f"- This position is a WINNER: unrealized gain is +{gain_pct:.1f}%, which "
-        f"has crossed the +{cfg.floor_gain_pct:.0f}% take-profit floor. Do not let "
-        "it fully round-trip.",
+        "- This position is a HELD WINNER: its unrealized gain has crossed the "
+        f"+{cfg.floor_gain_pct:.0f}% take-profit floor. Do not let it fully "
+        "round-trip. You must RESOLVE take-profit here — either bank part of the "
+        "gain at a concrete limit, or justify holding with specific remaining "
+        "upside. Staying silent on it is not an option.",
+        "- The SIZE of that gain is deliberately not quoted, and the percentage "
+        "in the position block must not drive your answer: this account sells "
+        "highest-cost-first, so each trim strips the dearest lot and mechanically "
+        "inflates the reported gain on the shares that remain, at an unchanged "
+        "price. Size the tranche and set the limit from the price / ATR / runway "
+        "facts below ONLY.",
     ]
     if price is not None:
         lines.append(f"- Current price ${price:.2f}.")
@@ -315,8 +333,9 @@ def build_guidance(
         lines.append(
             "- No clear upside/resistance level was found in the analysis, so ATR "
             "runway is unknown. Read the analysis for any ceiling; if none, set the "
-            "sell-limit around the good-day-reachable level above and lean to "
-            "banking at least one share given the gain."
+            "sell-limit around the good-day-reachable level above and take a single "
+            "share into strength — the floor is already crossed, so banking "
+            "something is the default when no ceiling can be identified."
         )
 
     lines.append(_sizing_directive(shares, runway, cfg))

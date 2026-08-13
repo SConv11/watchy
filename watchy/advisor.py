@@ -54,21 +54,28 @@ genuinely bearish — never TRIM. The ONE exception: a single high-priced share
 strongly warrants taking money off the table.
 
 TAKE-PROFIT / DON'T ROUND-TRIP A WINNER: protecting an existing gain matters as
-much as finding an entry. When the position already carries a MEANINGFUL
-unrealized gain (see "Unrealized P&L" in the position block — as a rough,
-NON-binding anchor, think roughly 15%+; a smaller gain rarely qualifies) AND the
-analysis shows the move is getting extended — price is at or into the resistance
-/ upside-target zone the analysts cite, momentum or volume is waning (weakening
-MACD, overbought or rolling-over RSI, a low-volume bounce), or the remaining
-upside to the analysts' target is small versus the downside to their stop — lean
-toward TRIM to bank part of the gain rather than letting it fully round-trip.
-This is deliberately NOT a fixed "up X% -> sell" rule: a strong, still-intact
-uptrend with real upside left should be allowed to run (HOLD), and a small gain
-with the thesis still early is not a take-profit signal. The trigger is the
-COMBINATION of a worthwhile gain and a stalling / extended setup. Respect the
-guards above — never force a fractional trim on a tiny whole-share position
-(follow the ODD-LOT guard), and judge any resulting weight against full account
-value.
+much as finding an entry. When the position is IN PROFIT AND the analysis shows
+the move is getting extended — price is at or into the resistance / upside-target
+zone the analysts cite, momentum or volume is waning (weakening MACD, overbought
+or rolling-over RSI, a low-volume bounce), or the remaining upside to the
+analysts' target is small versus the downside to their stop — lean toward TRIM to
+bank part of the gain rather than letting it fully round-trip. This is
+deliberately NOT a fixed "up X% -> sell" rule: a strong, still-intact uptrend with
+real upside left should be allowed to run (HOLD). The trigger is the COMBINATION
+of an existing gain and a stalling / extended setup. Respect the guards above —
+never force a fractional trim on a tiny whole-share position (follow the ODD-LOT
+guard), and judge any resulting weight against full account value.
+
+COST-BASIS CAVEAT: judge how extended a move is from PRICE, never from the
+"Unrealized P&L" percentage in the position block. This account sells shares
+highest-cost-first, so every trim removes the most expensive lot and MECHANICALLY
+raises the reported gain % on the shares that remain, at a completely unchanged
+price — a position trimmed twice can read +32% where the untrimmed one read +15%,
+with the stock flat the whole time. That percentage only ever ratchets upward,
+and each trim you recommend inflates it further, so its magnitude says nothing
+about how far the move has run. Treat it as a yes/no fact — a gain exists — and
+take every magnitude judgement (how extended, where to set a limit, how much to
+sell) from price levels, ATR, and the analysts' cited targets.
 
 {take_profit_guidance}
 Respond in this exact format:
@@ -155,8 +162,11 @@ def _take_profit_guidance(
         "upside=%s shares=%s",
         ticker, gain, floor, price, upside, shares,
     )
+    # `gain` armed the gate and is logged above, but is deliberately not passed
+    # on: its magnitude ratchets with every trim under HIFO and must not reach
+    # the prompt as a sizing anchor (#30). See tpmod.build_guidance.
     return tpmod.build_guidance(
-        ticker, gain, price, avg_atr, upside, tp, shares=shares
+        ticker, price, avg_atr, upside, tp, shares=shares
     ) + "\n"
 
 

@@ -88,9 +88,9 @@ held winners — the *don't-let-a-winner-round-trip* discipline. Controlled by t
 top-level `take_profit:` block, **enabled by default** (live since 2026-07-23);
 set `enabled: false` to turn it off. A held position whose unrealized
 gain crosses `floor_gain_pct` (default 10%) enters the **take-profit zone**: an
-explicit, fact-filled directive (unrealized gain, ATR *runway* to the analysts'
-cited upside, a reachable `price + k×ATR` sell-limit — anchored on the broker's
-live mark, the same feed the gain is derived from) is injected into the advisor
+explicit, fact-filled directive (ATR *runway* to the analysts' cited upside, a
+reachable `price + k×ATR` sell-limit — anchored on the broker's live mark, the
+same feed the gain is derived from) is injected into the advisor
 prompt, so the LLM actively proposes **banking a whole-share tranche via a
 sell-limit** — output as a new `Take-Profit:` line (e.g. *"sell 1 share at
 192.50"*) — instead of staying silent while the gain fades. The mechanical
@@ -118,6 +118,16 @@ Watchy never sees your orders, so it infers the fill from the position. A manual
 sell re-arms it too, correctly. The per-signal `cooldown_h` still applies, and a
 share count that *rises* (a stale cached snapshot serves the pre-trim, larger
 figure) is never read as a fill.
+
+For the same reason the gain % **arms the gate and goes no further**: its
+magnitude is not passed to the advisor, and both the zone directive and the
+standing prompt clause tell the model not to size or trigger off the
+`Unrealized P&L` figure that remains visible in the position block (it is still
+shown — you need the real broker number, and the same text goes to Telegram).
+Whether the floor was crossed is a yes/no fact; *how extended* the move is comes
+from price, ATR and the analysts' cited targets, none of which move when you
+sell. The journal still logs the percentage (`take-profit zone active for X:
+gain=…`) for reconciliation.
 
 Position size decides which actions are actually placeable, so the directive
 adapts to the share count:
