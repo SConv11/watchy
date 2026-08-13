@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 59228ea1-72b5-4746-be2d-7cf8847d06b0
-  modified: 2026-08-01T04:56:44.621Z
+  modified: 2026-08-13T16:04:11.946Z
 ---
 
 # Watchy LLM API 成本基线
@@ -16,8 +16,42 @@ metadata:
 - **Tier 2（TradingAgents pipeline，`watchy/pipeline_runner.py`）**：provider=DeepSeek
   - deep_think_llm = `deepseek-v4-pro`（Research Manager / PM）
   - quick_think_llm = `deepseek-v4-flash`（analysts / debaters / trader）
-  - 调度：每日 `11:30 UTC` 跑一次（周六跳过）
-- **Advisor（持仓建议合成，`watchy/advisor.py`）**：provider=Gemini，model=`gemini-3.5-flash`（VPS 实跑用的是 3.5-flash，确认于 2026-06-10；`secrets.example.yaml` 里的 2.5-flash 只是示例值）
+  - 调度：**每日 `10:02 UTC`**（美国交易日；周末+NYSE 假日跳过）——见下方涨价节
+- **Advisor（持仓建议合成，`watchy/advisor.py`）**：provider=Gemini，model=**`gemini-3.5-flash`**
+  （曾于 2026-07 升到 3.6-flash，**2026-08 前用户体感不佳已回退 3.5**，见 [[watchy-model-selection-eval]]）
+  - thinking 档位：**Tier1 与 Tier2 均 `low`**（Tier1 原为 `off`，2026-08-13 上调，理由见下）
+
+## 🚨 DeepSeek 分时计价上线（2026-08-16 16:00 UTC = 北京 08-17 00:00）
+
+**平价取消，改高峰/非高峰。高峰 = UTC 01:00–04:00 与 06:00–10:00（北京 09:00–12:00 与 14:00–18:00），非高峰 = 高峰的一半。**
+
+| 单价（元/1M） | 旧平价 | 新非高峰 | 新高峰 | 非高峰涨幅 |
+|---|---|---|---|---|
+| flash miss / hit / out | ¥1 / ¥0.02 / ¥2 | ¥1.5 / ¥0.05 / **¥4.5** | ¥3 / ¥0.10 / ¥9 | 1.5× / 2.5× / **2.25×** |
+| pro miss / hit / out | ¥3 / ¥0.025 / ¥6 | ¥4.5 / ¥0.15 / **¥13.5** | ¥9 / ¥0.30 / ¥27 | 1.5× / 6× / **2.25×** |
+
+（USD 侧：flash $0.22/$0.007/$0.66，pro $0.66/$0.022/$1.98。CNY 比值更干净，以 CNY 为准——DeepSeek 按 CNY 出账。）
+
+- **输出涨 2.25×、输入只涨 1.5×**，而 watchy 是输出主导（7/31 flash 重训后更甚）→ **实际涨幅 ≈ 1.9×**（USD/CNY 两条路径独立算出 1.92×/1.89×，互相印证）。
+- **钱**：单票 Tier2 ¥0.240→¥0.453；每交易日 ¥3.8→¥7.2；**每月 ¥80→¥152**；每年 ¥990→¥1,875。
+  Gemini 不受影响。合并总账单 **+57%**。
+- ⚠️ token 结构是从 MOD 7/03 实测 + 7/31 重训 +40% **推算**的，不是新测。要钉死就 grep 一条真实 TOKENCOST。
+- **watchy 全程非高峰**：Tier2 10:02 UTC（=北京 18:02，过 18:00 边界留 2 分钟余量）、Tier1 13:30–20:00 UTC。
+  **10:00 改 10:02 的原因**：官方没写 10:00 算高峰最后一分钟还是非高峰第一分钟，赌错整批 ×2。commit 见 2026-08-13。
+
+### 代码侧已跟进（2026-08-13/14 commits）
+- `token_tracker._prices_at()`：**按调用时刻选 flat/非高峰/高峰**三张表（旧 flat 表保留，让 cutover 前的
+  历史 TOKENCOST 仍可比）。**高峰表明明用不到也要维护**——排程若哪天漂进窗口，日志会直接翻倍报警而不是
+  静默少算。⚠️ 原来 `_PRICES` 是写死的旧平价，**不改的话 8/16 起每条 TOKENCOST 都少算 ~1.9×**。
+- `advisor._GEMINI_PRICE_OUT` 7.50→**9.00**（3.6 的价留在 3.5 上，GEMINICOST 少算 ~17%）。
+  **教训：两处价格常数都是"换模型/换计价没跟着改"的静默错账**，以后动模型必查这两个地方。
+- `tier2_time_utc` 10:00→**10:02**；watchlist 18→15（删 MU/LRCX/ETN）。
+
+## 🏁 DeepSeek thinking 档位（2026-08-13 查实，之前是未知数）
+
+- **只有两档：`high`（默认）和 `max`。** 兼容映射 `xhigh→max`、`low/medium→high`。语法 `reasoning_effort: "high"` 或 `thinking:{"type":"enabled"/"disabled"}`。
+- **watchy 不传参数 → 全部节点已经在 `high`。** 所以**没有"降一档"这个中间选项**，只有保持 `high` 或整个关掉（断崖，见 [[watchy-model-selection-eval]] 的 IFBench/AA-LCR 数据）。
+- 这推翻了本轮一度提出的"目标定在 high 而非 off"——那个收益早就落袋了。
 
 ## ⚠️ V4-Flash-0731 上线（2026-07-31，官方公告 api-docs.deepseek.com/updates）
 - **`deepseek-v4-flash` 从 Preview 转正式公测**，快照名 **DeepSeek-V4-Flash-0731**：**同架构重训**（不是新架构）。
