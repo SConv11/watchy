@@ -104,6 +104,21 @@ the price and share count; you place the order. `floor_gain_pct` is also
 per-ticker overridable (`take_profit_floor_gain_pct`); see the `take_profit` keys
 in Configuration.
 
+That intraday trigger also **re-arms whenever the share count drops** — i.e. when
+a sell-limit fills. It is otherwise edge-triggered on zone membership alone, and
+this account sells highest-cost-first (HIFO): every trim strips the dearest lot
+and *raises* the reported gain % on the shares that remain, at an unchanged
+price. The zone flag would therefore latch on for the life of the position,
+clearing only after a drawdown deep enough to drag the inflated gain back under
+the floor — i.e. after the winner has already round-tripped. The share count is
+the right signal because the protection here is the *standing* sell-limit, not
+the alert: while an order is working an intraday spike fills it with no new
+advice needed, so you are only exposed just after a fill, with the order gone.
+Watchy never sees your orders, so it infers the fill from the position. A manual
+sell re-arms it too, correctly. The per-signal `cooldown_h` still applies, and a
+share count that *rises* (a stale cached snapshot serves the pre-trim, larger
+figure) is never read as a fill.
+
 Position size decides which actions are actually placeable, so the directive
 adapts to the share count:
 

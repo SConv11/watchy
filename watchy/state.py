@@ -51,6 +51,9 @@ class StateStore:
                 -- take-profit zone membership last Tier 1 scan (#28): fire the
                 -- intraday zone-entry trigger only on the transition into it.
                 prev_take_profit_zone INTEGER,
+                -- share count seen last Tier 1 scan (#28): a drop means a
+                -- sell-limit filled, which re-arms the zone-entry trigger.
+                prev_quantity REAL,
                 updated_ts TEXT                        -- last update timestamp
             );
 
@@ -109,6 +112,8 @@ class StateStore:
             "derived_target_ts": "TEXT",
             # #28 take-profit zone membership (for on-entry transition detection).
             "prev_take_profit_zone": "INTEGER",
+            # #28 follow-up: last-seen share count, so a fill re-arms that trigger.
+            "prev_quantity": "REAL",
         }
         with self._lock:
             existing = {

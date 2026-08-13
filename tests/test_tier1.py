@@ -113,20 +113,26 @@ class TestTakeProfitZone:
             take_profit=TakeProfitConfig(enabled=enabled, floor_gain_pct=floor),
         )
 
-    def _held(self, gain_pct):
-        p = Position(ticker="AAPL", quantity=3, average_cost=100.0, current_price=189.0)
+    def _held(self, gain_pct, quantity=3):
+        p = Position(
+            ticker="AAPL", quantity=quantity, average_cost=100.0, current_price=189.0
+        )
         p.unrealized_pnl_pct = gain_pct
         return p
 
-    def _scan(self, config, *, prev_zone, gain, in_cooldown=False, digest=None):
+    def _scan(self, config, *, prev_zone, gain, in_cooldown=False, digest=None,
+              prev_qty=None, qty=3):
         """Drive a signal-free scan with the take-profit gate; return (store, notifier)."""
         store, notifier = MagicMock(), MagicMock()
-        store.get_ticker_state.return_value = (
-            {} if prev_zone is None else {"prev_take_profit_zone": prev_zone}
-        )
+        state = {}
+        if prev_zone is not None:
+            state["prev_take_profit_zone"] = prev_zone
+        if prev_qty is not None:
+            state["prev_quantity"] = prev_qty
+        store.get_ticker_state.return_value = state
         store.is_in_cooldown.return_value = in_cooldown
         src = MagicMock()
-        src.get_position.return_value = None if gain is None else self._held(gain)
+        src.get_position.return_value = None if gain is None else self._held(gain, qty)
         src.format_position_context.return_value = "Current position in AAPL"
         with patch("watchy.tier1.compute_indicators", return_value=_bundle(189.0)), \
              patch("watchy.tier1.detect_signals", return_value=[]), \
@@ -177,5 +183,85 @@ class TestTakeProfitZone:
             self._config(enabled=False), prev_zone=None, gain=15.7
         )
         adv.assert_not_called()
-        # gate off → zone flag untouched (None), not written
-        assert "prev_take_profit_zone" not in store.save_ticker_state.call_args.kwargs
+        # gate off → zone flag and share count untouched (None), not written
+        saved = store.save_ticker_state.call_args.kwargs
+        assert "prev_take_profit_zone" not in saved
+        assert "prev_quantity" not in saved
+
+
+class TestTakeProfitRearmOnFill:
+    """A fill re-arms the zone-entry trigger (#28 follow-up).
+
+    Under highest-cost-first lot accounting each trim strips the dearest lot and
+    raises the reported gain on the shares left, so the zone flag latches at 1
+    and the edge detector never fires twice. That leaves the position with no
+    standing sell-limit and no intraday trigger for a full session. A drop in
+    share count is the fill, so it re-arms.
+    """
+
+    _config = TestTakeProfitZone._config
+    _held = TestTakeProfitZone._held
+    _scan = TestTakeProfitZone._scan
+
+    def test_fill_refires_while_still_in_zone(self):
+        # Sold 1 of 3 shares; gain reads HIGHER afterwards (HIFO), so the zone
+        # flag is still 1 — the fill is what must re-arm the trigger.
+        store, notifier, adv = self._scan(
+            self._config(), prev_zone=1, gain=24.3, prev_qty=3, qty=2
+        )
+        adv.assert_called_once()
+        notifier.take_profit_alert.assert_called_once()
+        assert store.save_ticker_state.call_args.kwargs["prev_quantity"] == 2
+
+    def test_fractional_fill_refires(self):
+        store, notifier, adv = self._scan(
+            self._config(), prev_zone=1, gain=15.7, prev_qty=0.2, qty=0.1
+        )
+        adv.assert_called_once()
+
+    def test_unchanged_quantity_stays_silent(self):
+        store, notifier, adv = self._scan(
+            self._config(), prev_zone=1, gain=15.7, prev_qty=3, qty=3
+        )
+        adv.assert_not_called()
+        notifier.take_profit_alert.assert_not_called()
+
+    def test_stale_snapshot_reporting_more_shares_is_not_a_fill(self):
+        # A cached (pre-trim) position snapshot reports the larger, older count.
+        # An increase must never read as a fill.
+        store, notifier, adv = self._scan(
+            self._config(), prev_zone=1, gain=15.7, prev_qty=2, qty=3
+        )
+        adv.assert_not_called()
+
+    def test_no_baseline_does_not_refire(self):
+        # First scan after the migration: prev_quantity is NULL → no comparison.
+        store, notifier, adv = self._scan(
+            self._config(), prev_zone=1, gain=15.7, prev_qty=None, qty=2
+        )
+        adv.assert_not_called()
+
+    def test_fill_still_respects_cooldown(self):
+        store, notifier, adv = self._scan(
+            self._config(), prev_zone=1, gain=24.3, prev_qty=3, qty=2, in_cooldown=True
+        )
+        adv.assert_not_called()
+        assert store.save_ticker_state.call_args.kwargs["prev_quantity"] == 2
+
+    def test_quantity_persisted_below_floor(self):
+        # Tracked out of the zone too, so a sell made below the floor isn't
+        # replayed as a fresh fill on the next entry into it.
+        store, notifier, adv = self._scan(
+            self._config(floor=20.0), prev_zone=0, gain=15.7, prev_qty=3, qty=2
+        )
+        adv.assert_not_called()
+        saved = store.save_ticker_state.call_args.kwargs
+        assert saved["prev_take_profit_zone"] == 0
+        assert saved["prev_quantity"] == 2
+
+    def test_exit_records_zero_shares(self):
+        store, notifier, adv = self._scan(
+            self._config(), prev_zone=1, gain=None, prev_qty=3
+        )
+        adv.assert_not_called()
+        assert store.save_ticker_state.call_args.kwargs["prev_quantity"] == 0.0

@@ -92,12 +92,12 @@ def scan_ticker(
     # crosses the floor intraday gets an advisor-only take-profit call so its
     # sell-limit is set the same day, not next morning. Returns the current zone
     # membership to persist for on-entry transition detection.
-    tp_zone = _check_take_profit_zone(
+    tp_zone, tp_qty = _check_take_profit_zone(
         ticker, bundle, prev, config, store, notifier,
         position_source, pipeline_ran,
     )
 
-    _update_state(store, bundle, ticker, take_profit_zone=tp_zone)
+    _update_state(store, bundle, ticker, take_profit_zone=tp_zone, quantity=tp_qty)
     logger.info("Tier 1 scan complete: %s — signals: %s", ticker, actionable)
     return actionable
 
@@ -183,11 +183,16 @@ def _update_state(
     bundle: IndicatorBundle,
     ticker: str,
     take_profit_zone: int | None = None,
+    quantity: float | None = None,
 ) -> None:
     extra: dict[str, Any] = {}
     if take_profit_zone is not None:
         # #28 take-profit zone membership, for on-entry transition detection.
         extra["prev_take_profit_zone"] = take_profit_zone
+    if quantity is not None:
+        # #28 follow-up: last-seen share count — a drop is a fill, which re-arms
+        # the zone-entry trigger (see take_profit.was_trimmed).
+        extra["prev_quantity"] = quantity
     store.save_ticker_state(
         ticker,
         prev_sma_50_above_200=(
@@ -217,43 +222,59 @@ def _check_take_profit_zone(
     notifier: TelegramNotifier,
     position_source: PositionSource | None,
     pipeline_ran: bool,
-) -> int | None:
+) -> tuple[int | None, float | None]:
     """Detect a held winner crossing the take-profit floor intraday (#28).
 
-    Returns the current zone membership (1/0) to persist for transition
-    detection, or None when the gate is off / state can't be read (leave the
-    stored flag untouched). Fires an advisor-only take-profit call once, on the
-    transition INTO the zone — steady-state advice is the daily Tier 2's job.
+    Returns ``(zone_membership, share_count)`` to persist — 1/0 for the zone,
+    and the quantity that the next scan diffs against to spot a fill. Both are
+    None when the gate is off / state can't be read (leave the stored values
+    untouched). Fires an advisor-only take-profit call on the transition INTO
+    the zone, and again after a fill; other steady-state advice is Tier 2's job.
     """
     if not config.take_profit.enabled or position_source is None:
-        return None
+        return None, None
 
     try:
         pos = position_source.get_position(ticker)
     except Exception:  # noqa: BLE001
         logger.warning("take-profit: position lookup failed for %s", ticker, exc_info=True)
-        return None
+        return None, None
+
+    # Record the count even below the floor, so a sell made while out of the
+    # zone can't be mistaken for a fresh fill on the next entry into it.
+    qty = pos.quantity if pos is not None else 0.0
 
     gain = tpmod.position_gain_pct(pos)
     floor = tpmod.effective_floor_pct(config.get_ticker_config(ticker), config)
     in_zone = tpmod.is_in_zone(gain, floor)
     if not in_zone:
-        return 0
+        return 0, qty
+
+    # A drop in share count means the standing sell-limit filled, leaving the
+    # position unprotected — re-arm even though the zone flag is still set. Under
+    # highest-cost-first lot accounting the flag would otherwise latch at 1 for
+    # the life of the position; see tpmod.was_trimmed for why quantity, not gain.
+    trimmed = tpmod.was_trimmed(prev.get("prev_quantity"), qty)
 
     prev_zone = prev.get("prev_take_profit_zone")
-    if prev_zone:
+    if prev_zone and not trimmed:
         # Already in the zone last scan → steady state; the daily Tier 2 run
         # re-advises with the same directive, no intraday call needed.
-        return 1
+        return 1, qty
     if pipeline_ran:
         # A technical signal already ran the advisor this scan with the
         # take-profit directive injected — don't fire a second call.
-        return 1
+        return 1, qty
     if store.is_in_cooldown(ticker, "take_profit_zone", config.take_profit.cooldown_h):
-        return 1
+        return 1, qty
 
+    if trimmed:
+        logger.info(
+            "Take-profit re-arm for %s: shares %s → %s (fill), zone still active",
+            ticker, prev.get("prev_quantity"), qty,
+        )
     _fire_take_profit(ticker, bundle, config, store, notifier, position_source, gain)
-    return 1
+    return 1, qty
 
 
 def _fire_take_profit(

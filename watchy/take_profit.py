@@ -52,6 +52,41 @@ def position_gain_pct(pos: "Position | None") -> float | None:
     return pos.unrealized_pnl_pct
 
 
+# Share counts come back as floats (Schwab's longQuantity - shortQuantity), so
+# compare with a tolerance rather than exactly. Real trims are >= 0.1 shares.
+_QTY_EPSILON = 1e-6
+
+
+def was_trimmed(prev_quantity: float | None, quantity: float | None) -> bool:
+    """True when shares were sold since the last scan — i.e. a sell-limit filled.
+
+    This re-arms the Tier 1 intraday zone-entry trigger, which is otherwise
+    edge-triggered on zone membership alone and would never fire twice (#28).
+
+    Why quantity and not the gain: the account sells highest-cost-first, so each
+    trim strips the dearest lot and *raises* the reported gain % on the shares
+    that remain, at an unchanged price. The zone flag therefore latches at 1 and
+    only clears after a drawdown deep enough to drag the inflated gain back under
+    the floor — by which point the winner has already round-tripped, which is the
+    exact outcome this feature exists to prevent.
+
+    A quantity drop is the precise event that matters, because the protection in
+    this design is the *standing* sell-limit, not the alert: while an order is
+    working, an intraday spike fills it without any new advice. You are only
+    unprotected in two states — never entered the zone (the normal 0->1 edge
+    covers it), and *just filled*, where the order is gone and the flag is
+    latched. That second one is this function. A manual sell re-arms it too,
+    correctly: you are equally unprotected either way.
+
+    Returns False on a missing baseline (first scan after the migration) and on
+    an increase — a stale cached position snapshot reports the pre-trim, larger
+    quantity, and must never be read as a fill.
+    """
+    if prev_quantity is None or quantity is None:
+        return False
+    return quantity < prev_quantity - _QTY_EPSILON
+
+
 def bundle_avg_atr(bundle: "IndicatorBundle | None") -> float | None:
     """The ATR to size the trail/limit against — 20d average, else the raw ATR."""
     if bundle is None:

@@ -12,6 +12,7 @@ from watchy.take_profit import (
     extract_upside_level,
     is_in_zone,
     position_gain_pct,
+    was_trimmed,
     suggest_limit,
 )
 
@@ -161,6 +162,34 @@ class TestExtractUpsideLevel:
         assert extract_upside_level("No levels cited here.", 188.0) is None
         assert extract_upside_level("", 188.0) is None
         assert extract_upside_level("target $200", None) is None
+
+
+class TestWasTrimmed:
+    """A share-count drop = a sell-limit filled → re-arm the trigger (#28)."""
+
+    def test_drop_is_a_fill(self):
+        assert was_trimmed(3, 2) is True
+
+    def test_fractional_drop_is_a_fill(self):
+        assert was_trimmed(0.2, 0.1) is True
+
+    def test_full_exit_is_a_fill(self):
+        assert was_trimmed(1, 0.0) is True
+
+    def test_unchanged_is_not(self):
+        assert was_trimmed(3, 3) is False
+
+    def test_increase_is_not(self):
+        # A stale cached snapshot serves the pre-trim, larger count — never a fill.
+        assert was_trimmed(2, 3) is False
+
+    def test_missing_baseline_is_not(self):
+        # First scan after the migration: no prior count to diff against.
+        assert was_trimmed(None, 2) is False
+        assert was_trimmed(3, None) is False
+
+    def test_float_noise_is_not_a_fill(self):
+        assert was_trimmed(3.0, 3.0 - 1e-12) is False
 
 
 class TestBuildGuidance:
