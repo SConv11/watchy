@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: f643c967-dcdd-4f5f-8361-42190c001e1e
-  modified: 2026-08-07T15:29:21.465Z
+  modified: 2026-08-13T09:53:51.035Z
 ---
 
 # 用户交易痛点 & advisor 止盈缺口
@@ -138,6 +138,56 @@ indicator_bundle=) → advisor.py:190` 全链路跑通。
 `journalctl -u watchy --since '2026-08-06' | grep -c 'Advisor for APH'`（应为 1）。
 
 **#28 剩余**：核心 + 两条触发路径均已实盘验证；可考虑结单。
+
+## 🐛 2026-08-13 用户发现：HIFO 成本基使浮盈% 单调棘轮 → issue #30
+
+**用户按 HIFO 卖出（先卖成本最高那股）**。每次减持剥掉最贵的 lot，剩余股均价下降，
+**价格完全不动，报告浮盈% 反而上升**。lots 130/110/100/85/75、价钉死 $115：
+5股 +15.0% → 4股 +24.3% → 3股 +32.7% → 2股 +43.8% → 1股 +53.3%。
+数字对剩余股是**算术正确的**，但它响应的是**我们自己的卖出**、不是行情，且只增不减。
+
+**三处后果**：
+1. **Tier 1 盘中触发在首次减持后死掉**。`_check_take_profit_zone` 靠 `prev_take_profit_zone`
+   做 0→1 边沿；latch 在 1 后只有浮盈跌回 floor 以下才复位，而虚高的基使这个门槛越来越深
+   （从 $115 起：未减持需 −4.3%，减1次 −11.5%，减2次 −17.1%）→ **复位时赢家已经 round-trip 完了**。
+2. **喂给 LLM 的 gain 幅度虚高，共三个注入点**（只改一个无效）：
+   `take_profit.build_guidance`（`"+X% WINNER"` + 无 runway 时的 `"given the gain"` 兜底）；
+   **`advisor.py` 常驻系统提示**里 `see "Unrealized P&L" ... think roughly 15%+`
+   ——**每次调用都在、与门控无关**，还硬编了数值锚；仓位块 `render_position()` 本身
+   （这个**必须保留**，同一份 `format_position_context()` 也进 Telegram 给人看）。
+3. **成本**：`tier2.py` 对区内票永久豁免 `tier2_days` 节流 → 天天跑全量 pipeline（~$9.6/年/票）。
+
+**用户定调（关键设计原则）**：gain% **当触发器保留**（">10%=值得持续评估"仍成立），
+**当决策依据剔除**——挂单价和股数只能来自 price/ATR/runway（这部分本来就干净）。
+
+**✅ 已修（commit 4fd9436）**：Tier 1 改为**持仓股数下降即重新武装**。
+选股数而非价格水位线的理由：**这套设计的保护力来自"挂着的限价单"、不是提醒**——
+单子在市场上挂着时盘中冲高它自己成交，不需要新建议；**你只在成交后那一刻无保护**
+（单子没了 + flag 还 latch 着），暴露约一个交易时段。Watchy 从不看订单簿，只能从持仓推断成交。
+手动卖出也会重新武装，这是对的。新列 `ticker_state.prev_quantity`（**需 ALTER TABLE 迁移**，
+已对预存 schema 验证）。护栏：股数**上升**永不算成交（cache 快照会给出减持前的大数）、
+无基线不武装、`cooldown_h` 仍生效、低于 floor 也记录股数（避免区外卖出被当成新成交重放）。
+
+**✅ 已修其二（commit e43b3dc）：从提示词剥离 gain 幅度**。三个注入点里**前两个改掉、第三个必须留**
+（`render_position()` 的百分比是真实券商数字，且同一份文本要进 Telegram 给人看）——所以前两处
+改成**显式中和**而不是静默省略：只删数字的话 LLM 照样从仓位块里读。
+- `build_guidance` **签名去掉 `gain_pct`**（让"幅度不许进 prompt"变成结构约束而非约定）；
+  是否越过 floor 留在 caller 当武装条件；`advisor._take_profit_guidance` 仍 log 那个数字供对账。
+- **紧迫感刻意保留**（用户痛点是卖太晚不是卖太早）：指令仍然要求"必须给结论——挂单落袋 or
+  用具体剩余上行论证持有，不许沉默"，常驻段落仍 `lean toward TRIM`；只是幅度没了，
+  定量本来就由 ATR runway + 股数驱动。
+- **提示词改动没有测试能证明有效**（单测只能验字符串在不在）——真实效果看上线后 advisor 输出。
+410 tests green，`4fd9436`+`e43b3dc` 已 push（2026-08-13 09:53 UTC，Tier2 起跑前 7 分钟，
+用户知情并要求推；用户手动 pull&restart）。
+
+**⏳ #30 剩余（用户明确说先不动）**：Tier 2 止盈区永久豁免 `tier2_days` 节流。
+钱不是重点（latch 一票 +$4~6/年），**真正代价是批次时长**——`tier2_days` 当初就是为了让批次
+赶在 13:30 UTC 开盘前跑完（7/31 重训后时长翻倍），而 latch 恰好对最可能 latch 的那批
+（持仓赢家）静默解除节流。repo config 12 票里 11 票配了轻量轮换，持仓的 6 票是
+EMR/APH/NVT(mon,wed,fri) + ASML/VST/LUMN(tue,thu)，latch 一次就跳回 5 天/周。
+**建议先测再改**：`journalctl -u watchy --since '7 days ago' | grep -c 'not scheduled today'`
+（cadence 还在不在起作用）+ `grep 'take-profit zone active'`（几票在区内）。
+不紧急：方向是"多跑"不是"少跑"，不会漏止盈信号。
 
 **未做（deferred）**：机械 trailing-stop（撤销）；一等公民阻力位提取（现正则尽力）；触发时的 full-pipeline hybrid；
 Schwab 自动下单。= **#17 候选 A 卖出侧实例**（#26 买入侧无关）。
