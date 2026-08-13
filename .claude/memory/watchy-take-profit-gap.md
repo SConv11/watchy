@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: f643c967-dcdd-4f5f-8361-42190c001e1e
-  modified: 2026-08-13T09:53:51.035Z
+  modified: 2026-08-13T16:59:21.911Z
 ---
 
 # 用户交易痛点 & advisor 止盈缺口
@@ -206,3 +206,24 @@ Schwab 自动下单。= **#17 候选 A 卖出侧实例**（#26 买入侧无关�
 （缺 final_trade_decision 块 + position 现拉），只适合**同一次运行内的受控 A/B**（模型vs模型、档vs档）。
 新增 `--model`(thinking脚本)、`--position-file`(models脚本,注入历史持仓回放已卖出的票)。
 详见 [[watchy-api-cost-baseline]]。
+
+## 🐛 2026-08-13：SKHY 止盈两条腿全断（issue #31，实现待议）
+
+SKHY 是新上市 ADR、只有 23–24 根日线，而 `indicators.py:76` 有 `len(close) < 200 → return None` 的硬门槛：
+
+1. **Tier 1**：`tier1.py:52-55` 在 `scan_ticker` 开头就 `return []`，**第 95 行的 `_check_take_profit_zone`
+   永远走不到** → 盘中 zone-entry 对它根本不存在。
+2. **Tier 2**：容忍 `bundle is None` 照跑照付钱，但 `avg_atr=None` → **限价锚 `price + mult×ATR` 算不出来**。
+
+**净结果 = 一只持仓票、挂在最贵的每日档（涨价后 ~$24/年）、止盈完全无保护**，自然痊愈要等约 176 个交易日（8–9 个月）。
+
+⚠️ **不能只把门槛数字调低**：`rolling(200)` 在短序列上返回 **NaN 而不是报错**，而 **NaN 在 Python 里是 truthy**，
+会穿透 `detect_signals:145` 的 `if sma50 and sma150 and sma200:` 和 `_classify_sepa_stage:370` 的
+`if not all([...]): return None` → **假死叉** + **编造的 SEPA stage 被当事实喂给 advisor**（不报错、不为 None、
+就是个看着正常的错答案）。**那道 200 门槛现在是承重墙**，挡的就是 NaN 外泄。
+
+修法（#31）：取消全局门槛改逐指标判断（不够写 None 绝不写 NaN）+ `avg_atr_20d` 不足 34 行给 None
+（现在会静默把单日 ATR 塞进这个字段，而止盈限价就骑在它上面）+ 启动校验 Telegram 告警 + 短历史 fixture 测试。
+下游零改动（消费方已全部 None-safe，逐一核过）。
+
+⚠️ 连带：MU 已于 2026-08-13 删除（理由正是"与持仓的 SKHY 重复"），所以现在 **HBM 这条线没有任何可用监控**。
