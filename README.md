@@ -152,6 +152,14 @@ advisor's own token usage is logged as a `GEMINICOST` line; its thinking level i
 per-tier (`llm.gemini_thinking_tier1` and `llm.gemini_thinking_tier2`, both `low`)
 in `secrets.yaml`.
 
+The summary tail is anchored on the Markdown table every analyst prompt asks for
+at the end of its report. If that table is missing, the digest silently falls back
+to the report's *opening* lines instead of its conclusion — so that case logs a
+greppable `ADVISOR_TAIL_FALLBACK` warning with the ticker and analyst. Watch it
+after a model change: DeepSeek uses floating aliases and has shipped snapshots
+unannounced, and trailing format instructions are the first thing a weaker
+instruction-follower drops.
+
 **The position source (#4) is layered, so it keeps working when Schwab can't
 refresh:**
 

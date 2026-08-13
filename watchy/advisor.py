@@ -358,7 +358,9 @@ def _format_analysis(result: dict[str, Any]) -> str:
         follows it — not the long analytical prose that precedes the table;
       - the SEPA stage.
 
-    A report with no summary table falls back to its opening lines; with no
+    A report with no summary table falls back to its opening lines — and logs a
+    greppable ``ADVISOR_TAIL_FALLBACK`` warning, because that substitutes the
+    report's opening for its conclusion and is otherwise invisible. With no
     decision or reports at all, falls back to the truncated recommendations.
     """
     parts: list[str] = []
@@ -386,6 +388,21 @@ def _format_analysis(result: dict[str, Any]) -> str:
         if not text:
             continue
         tail = _analyst_summary_tail(text)
+        if tail is None:
+            # Every analyst prompt ends with "append a Markdown table at the end
+            # of the report"; _analyst_summary_tail anchors on exactly that. If
+            # the table goes missing the advisor silently receives the report's
+            # OPENING instead of its conclusion — a quality regression with no
+            # other symptom, so it gets a greppable warning. Expected triggers:
+            # a model refresh (DeepSeek uses floating aliases and has shipped
+            # snapshots unannounced) or lowered thinking effort, which costs
+            # ~26 points of IFBench and is what this metric gates.
+            logger.warning(
+                "ADVISOR_TAIL_FALLBACK %s %s — no summary table in report, "
+                "falling back to first 400 chars",
+                result.get("ticker", "-"),
+                label,
+            )
         snippet = tail if tail else (text.strip()[:400] + " …")
         parts.append(f"--- {label} (summary) ---\n{snippet}")
 

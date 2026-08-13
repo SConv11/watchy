@@ -1,5 +1,6 @@
 """Tests for advisor: prompt formatting and advice parsing (no LLM calls)."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -206,6 +207,25 @@ class TestFormatAnalysis:
         result = {"_reports": {"news_report": "Headline-only note, no table."}}
         text = _format_analysis(result)
         assert "Headline-only note" in text
+
+    def test_missing_table_warns(self, caplog):
+        # The fallback swaps the report's conclusion for its opening. That is
+        # invisible in the advice itself, so it must be greppable in the log.
+        result = {"ticker": "NVDA", "_reports": {"news_report": "No table here."}}
+        with caplog.at_level(logging.WARNING, logger="watchy.advisor"):
+            _format_analysis(result)
+        assert "ADVISOR_TAIL_FALLBACK" in caplog.text
+        assert "NVDA" in caplog.text
+        assert "News Analyst" in caplog.text
+
+    def test_table_present_does_not_warn(self, caplog):
+        result = {
+            "ticker": "NVDA",
+            "_reports": {"news_report": "| A | B |\n|---|---|\n| 1 | 2 |\nDone."},
+        }
+        with caplog.at_level(logging.WARNING, logger="watchy.advisor"):
+            _format_analysis(result)
+        assert "ADVISOR_TAIL_FALLBACK" not in caplog.text
 
     def test_includes_trader_plan(self):
         result = {"trader_plan": "**Action**: Buy\n**Entry Price**: 180"}

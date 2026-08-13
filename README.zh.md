@@ -48,6 +48,8 @@
 
 **每次分析完成后**，Watchy 获取该票的当前持仓（position），调用轻量 LLM（默认 Gemini）将**精简后的分析摘要（digest：决策链 + 各分析师的总结尾巴，非全文）**与持仓合成可执行的交易建议，推送自然语言摘要到 Telegram。顾问自身的 token 用量打成 `GEMINICOST` 行；其 thinking 档位按层设置（`secrets.yaml` 里 `llm.gemini_thinking_tier1`、`llm.gemini_thinking_tier2`，均为 low）。
 
+「总结尾巴」锚定在各分析师 prompt 都要求的报告末尾 Markdown 表格上。**表格若缺失，digest 会静默退回报告的开头几行（而非结论）**——所以该分支会打一条可 grep 的 `ADVISOR_TAIL_FALLBACK` 警告（含 ticker 与分析师名）。换模型后要盯这条：DeepSeek 用浮动别名且有过不公告就上新快照的先例，而末尾格式指令正是指令遵循能力下降时最先被丢掉的东西。
+
 **持仓数据源（position source，#4）是分层的，保证 Schwab 无法刷新时仍可用**：
 
 1. **Schwab API（实时）** —— 主数据源。每次成功获取后，快照（snapshot）会缓存到 `~/watchy_config/positions_cache.json`。
