@@ -40,14 +40,13 @@ watchlist:
     tier2_days: ["tue", "thu"]
 
   # --- Watch-only (not held). Also still subject to the proximity gate below.
-  - ticker: "MU"
-    tier2_days: ["mon", "thu"]
+  # Dropped 2026-08-13 as thematically redundant with names already held:
+  # MU (HBM -> SKHY), LRCX (semicap -> ASML), ETN (electrical -> EMR/APH/NVT).
+  # Note the weekly full-risk day exempts every ticker from tier2_days, so a
+  # watch-only name still costs ~$6/yr just by being listed — cadence can't be
+  # lowered past that floor, only removal takes it to zero.
   - ticker: "COHR"
     tier2_days: ["mon", "thu"]
-  - ticker: "ETN"
-    tier2_days: ["tue", "fri"]
-  - ticker: "LRCX"
-    tier2_days: ["tue", "fri"]
   - ticker: "CEG"
     tier2_days: ["wed"]
 
