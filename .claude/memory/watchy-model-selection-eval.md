@@ -5,10 +5,88 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 0c826df4-315c-43ad-9514-7423b3ce1f24
-  modified: 2026-08-13T16:01:37.880Z
+  modified: 2026-08-14T13:29:52.130Z
 ---
 
 # Watchy LLM 选型 & 评测方法（讨论中，2026-08-02）
+
+## 2026-08-14：GPT-5.6 评估 → **不换，比 DeepSeek 那次还干脆**
+
+**AA-Omniscience Index 两个家族完全不重叠**：Gemini 最差档（3.5F-minimal, **1**）> GPT-5.6 最好档
+（Terra-max, **0**），其余 GPT 全是负数（−3 ~ −25）。幻觉率：**GPT-5.6 全系推理档 88–93%**
+（Terra-max 88 / Terra 其余 89-90 / Luna 90-93 / Terra 不推理 95），= V4-Pro 95% 的同一档，
+比 3.5F 的 62% 差 **26–31pp**。advisor 正是吐 `Take-Profit:` 限价 + `Target:` 的组件 → 一票否决。
+
+| 模型 | AA-LCR | 幻觉↓ | $/1M in/out |
+|---|---|---|---|
+| **3.5F（在跑）** | **81.0** | **62%** | $1.50 / $9.00 |
+| GPT-5.6 Terra (max) | 79.7 | 88% | **$2.00 / $12.00** |
+| GPT-5.6 Luna (max) | 78.3 | 93% | $0.20 / $1.20 |
+| GPT-5.6 Luna (medium) | 72.0 | 91% | $0.20 / $1.20 |
+
+- **Terra 被完全支配**：LCR 更低、幻觉差 26pp、**每 token 还比现在贵**（$12 > $9），
+  且 21k 输出 token/task（啰嗦，同 V4-Pro 的死因）。没有取舍可谈。
+- **Luna 是唯一真候选，且只赢在价**：输出便宜 7.5× → advisor $15/月 → **~$2/月，年省 ~$155**
+  （**目前所有候选里省得最多**），代价是拿 93% 幻觉率的模型写卖出限价。不成立。
+- GPT-5.6 定价（7/30 降价后）：Terra $2/$12、Luna $0.20/$1.20；缓存输入 10%，Batch API 再半价。
+- GPT-5.6 同样**没有 IFBench 数据**。
+
+**⚠️ 架构论据在这里不适用（要说清楚）**：当初否掉 DeepSeek 的两条非智力理由（SPOF：Tier1 卖出路径
+不该依赖 pipeline 的 provider；独立校验：同族模型容易顺着 pipeline 走）**OpenAI 两条都满足**——
+它是真正独立的第三家。**GPT-5.6 只输在校准这一条。** 说清楚是因为：哪天 OpenAI 出个 Flash 式校准档，
+架构理由不会再帮你挡第二次。
+
+**🔑 两天三个家族 → 这已是规律不是三个孤立结果**：DeepSeek V4-Pro 88–96%、GPT-5.6 88–95%、
+Gemini Flash 56–68%——**Gemini 在弃权/校准上孤零零领先 ~25pp**，而另外两家都是「综合分打平或反超、
+这一项惨败」。→ **advisor 的模型实质锁死在 Gemini Flash**，直到别家出现幻觉率 <70% 的型号为止；
+**不要再因为综合分变动重开这个议题**。
+
+**真迁 OpenAI 的话代码没准备好**（`_call_openai_compatible` @ `advisor.py:545` 是给非推理模型写的）：
+① **没有 reasoning-effort 参数** —— GPT-5.6 上这是 40 分的断崖（Luna 不推理 LCR 38.7 vs max 78.3），
+默认档静默跑 = 灾难且不可见；② 发的是 `max_tokens` 而非 `max_completion_tokens`，
+**OpenAI 推理模型的 reasoning token 计在这个预算里** = 7 月 `thinkingBudget:-1` 截断事故的同款形状、换个厂；
+③ **完全没有成本仪表**（`GEMINICOST` 只在 Gemini 分支），迁过去等于退回「advisor 全靠后台看账」。
+
+## 2026-08-14：Gemini 3.7 Flash 评估 → **不换，advisor 留 3.5F**（用户 OCR AA 子项）
+
+3.7 Flash 于 **2026-08-13 发布**，主打编码/agent，**introductory 半价 $0.75/$3.75 到 2026-12-31**，
+2027-01-01 恢复 **$1.50/$7.50**（对比 3.5F 的 $1.50/$9.00）。model id `gemini-3.7-flash`，
+同样走 `thinkingConfig.thinkingLevel`，档位文档只列 **low/medium/high（无 minimal）**。
+
+| 模型 | AA-LCR | Omni **Index** | Omni 准确率 | **幻觉率**↓ | AA-LCR $/task |
+|---|---|---|---|---|---|
+| **3.5 Flash（在跑）** | **81.0** | 21 | 51% | **62%** | $0.19 |
+| 3.5F (medium) | 79.7 | 21 | 51% | 62% | $0.18 |
+| 3.6 Flash | 79.0 | 22 | 50% | **56%** | $0.18 |
+| 3.7F (low) | 78.3 | 22 | 54% | 68% | $0.08 |
+| 3.7F (medium) | **81.0** | 24 | 54% | 66% | $0.09 |
+| 3.7F (high) | 80.0 | **26** | 55% | 65% | $0.09 |
+| 3.5F (minimal) | 58.3 | 1 | 43% | 74% | $0.16 |
+
+**🔑 新增判据：Omni Index 涨 ≠ 对 advisor 更好——必须拆成准确率/幻觉率两半看。**
+Index = 准确率 与 幻觉率 的净额。3.7F 的 Index 上涨全来自**准确率**（闭卷参数化知识），
+而 advisor 是 **grounded on digest、不考知识**，那一半对 watchy 无意义；
+能迁移的是**幻觉率 = 不会的时候是编还是弃权**，正对应编造 `Take-Profit:`/`Target:` 价位——
+**3.7F 在这一项比 3.5F 差 4–6pp、比 3.6F 差 9–12pp**。
+
+**结论：换 3.7F 智力上买不到东西**（AA-LCR 81.0 = 81.0 平手；3.7F-low 78.3 反而退步），
+**纯粹是省钱盘**，而钱很小：advisor ≈$12–15/月 → 现在省 ~$6/月；**2027-01-01 恢复原价后只省 11–15%**，
+且 medium 档 reasoning token 若翻倍（AA 实测 3.7F-medium 16k reasoning vs 现在 3.5F-low ~1900 think）
+**明年反而更贵**。按既定原则「按架构和风险决策，不按省钱」→ 不动。
+
+**两条加重风险**：① **3.7F 没有 IFBench 数据**（该项已掉出综合分），而它是"编码/agent 调优 + 降价"
+的刷新——正是本 memory 警告的"抬综合分、回退尾部格式遵循"画像，失败形态 = `Take-Profit:` 正则静默不匹配；
+② 昨天才发，零现场数据。**但它是独立 model id 不是浮动别名 → 没人逼你迁，可以等 IFBench。**
+
+**真要测的话**：用 **medium 不用 low**（low 比现状掉 2.7 LCR；medium 打平且约半价）。先修三个雷：
+- `advisor.py:449-450` `_GEMINI_PRICE_IN/OUT` 写死 1.50/9.00 —— **这已是第三次会变陈旧**；
+  且 intro 价需要 **2027-01-01 按调用时刻切价**，照抄 `token_tracker._prices_at()` 的做法。
+- `advisor.py:576` `_gemini_thinking_config` 把 `off`→`"minimal"`，**3.7 文档无 minimal → 400**。
+  现在两层都是 `low` 不会触发，但是埋着的雷。
+- `scripts/compare_gemini_thinking.py:136,191` 默认值还写着 `gemini-3.6-flash`（**已陈旧**，会静默测错模型）。
+- live model 在 VPS `~/watchy_config/secrets.yaml`，切换是 VPS 侧改配置、不是 push。
+- 判据用 `compare_gemini_models.py` + 格式解析指标（Take-Profit 行在否 / 限价 vs ATR / 整股 / 尾表解析率），
+  **并记录 think token**——明年的经济性全押在这个数上。
 
 ## 现状（2026-08-13 更新）
 - **advisor = Gemini 3.5-flash，Tier1 与 Tier2 都是 thinking `low`**
