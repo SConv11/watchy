@@ -142,7 +142,15 @@ take_profit:
 # capped)) but skip the pipeline. A per-ticker max_tier1_pipelines_per_day in the
 # long-form watchlist overrides this. Remove this line to disable the cap.
 # Tier 2 scheduled runs are never affected.
-max_tier1_pipelines_per_day: 2
+#
+# Lowered 2 -> 1 on 2026-08-21. A Tier 1 rescan is no longer the "half price"
+# it was when the cap was introduced: measured on 2026-08-20 it costs 79% of a
+# full Tier 2 run (CNY 0.453 vs 0.573). Dropping analysts only trims the flash
+# side, while the pro pair (Research Manager + Portfolio Manager) runs on every
+# pipeline and does not shrink -- COHR's rescan that day spent MORE on pro
+# (CNY 0.263) than the same ticker's full Tier 2 run did (CNY 0.226). Tier 1 was
+# 16% of that day's bill for 3 rescans.
+max_tier1_pipelines_per_day: 1
 
 # Thresholds & cooldowns below are OPTIONAL — defaults are in code.
 # Uncomment any section to override.

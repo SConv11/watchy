@@ -133,7 +133,7 @@ sudo systemctl enable --now watchy-update.timer
 | `min_price_proximity_pct` | Tier 2 邻近门控（#15）的**全局默认**百分比，套到所有 watch-only（非持仓）票；普通交易日现价离入场目标价超过该值就跳过当日 LLM。持仓票与每周完整风控日（每周第一个交易日）永不门控，Tier 1 不受影响。可按票用同名键覆盖；删除/留空即全局关闭 |
 | `tier2_days` | **Tier 2 分层 cadence**。星期缩写列表（`["mon","wed","fri"]`），指定该票在哪几天跑日常流水线；全局默认套用到没单独设置的票。**整个不写 = 每个交易日都跑**（历史行为）。一次 4 分析师流水线的年成本与仓位大小无关，所以小仓位可以走轻档，同时让批次赶在 13:30 UTC 开盘前跑完。**每周完整风控日**和**已进入止盈区的持仓**永不被跳过 |
 | `atr_proximity_mult` | 可选的 ATR 自适应带宽（#15 后续），全局或按票。设了且有 ATR 数据时，门控带宽 = `mult × ATR%`（`ATR% = avg_atr_20d / price × 100`），替代固定百分比——波动大的票更宽、安静的更窄。钳到 `[proximity_pct_floor, proximity_pct_ceiling]`（默认 4–20%）；无 ATR 数据时回退 `min_price_proximity_pct`。用 `scripts/calibrate_atr_proximity.py` 校准 |
-| `max_tier1_pipelines_per_day` | Tier 1 盘中重扫上限（#23），全局或按票。每次 Tier 1 信号触发都会跑一条付费 `[market+social]` pipeline + 顾问（仅受每信号冷却约束），所以一只票一天触发多种信号会叠加多次付费重扫（实测 KLAC×4、LRCX×3）。该值上限每票每 UTC 日的 Tier 1 LLM pipeline 次数；超限的触发仍记录+推送（`Signal Fired (rescan capped)`）但跳过 pipeline。按票用同名键覆盖；删除/留空即全局关闭。Tier 2 定时跑不受影响 |
+| `max_tier1_pipelines_per_day` | Tier 1 盘中重扫上限（#23），全局或按票。每次 Tier 1 信号触发都会跑一条付费 `[market+social]` pipeline + 顾问（仅受每信号冷却约束），所以一只票一天触发多种信号会叠加多次付费重扫（实测 KLAC×4、LRCX×3）。该值上限每票每 UTC 日的 Tier 1 LLM pipeline 次数；超限的触发仍记录+推送（`Signal Fired (rescan capped)`）但跳过 pipeline。按票用同名键覆盖；删除/留空即全局关闭。Tier 2 定时跑不受影响。**出厂值为 `1`**——重扫已不再是当初设上限时的「半价」：2026-08-20 实测一次重扫要花掉完整 Tier 2 的 79%（¥0.453 vs ¥0.573），因为砍分析师只砍 flash 侧，而 `pro` 的 Research Manager + Portfolio Manager 每条 pipeline 都跑、一点不缩 |
 | `signal_thresholds` | RSI、成交量、ATR 等信号检测阈值（thresholds） |
 | `cooldown` | 每种信号的冷却窗口（cooldown window），防止重复推送 |
 | `tier2_throttle_s` | Tier 2 每日扫描时票与票之间的间隔秒数（默认 2.0），平滑 yfinance 请求、避免触发限流 |
