@@ -309,7 +309,9 @@ TOKENCOST 现在可以直接当账单用（`_prices_at()` 改对了，见上）�
 旧记"盘中 2 分析师重扫 ≈ 半价"**已作废**。实测 8/20：Tier1 均 ¥0.453 vs Tier2 均 ¥0.573。
 **根因：砍分析师只砍 flash，`pro`(RM+PM) 是每条 pipeline 都跑的固定地板，一点不缩。**
 反常识实例：**COHR 的 Tier1 重扫 pro 花 ¥0.263 > 同票 Tier2 全量的 pro ¥0.226**。
-→ `max_tier1_pipelines_per_day`（现 2）现在是**比以前值钱得多的纯配置杠杆**：Tier1 占 8/20 的 16%。
+→ `max_tier1_pipelines_per_day`（原 2）现在是**比以前值钱得多的纯配置杠杆**：Tier1 占 8/20 的 16%。
+→ **✅ 已落地（2026-08-21，commit 21f1eb2）：全局 2 → 1。** 逻辑是 `runs_today >= cap` 才跳，所以 cap=1 = 每票每 UTC 日仍保留**第一次**重扫，后续触发照常 log_signal + 推送 `Signal Fired (rescan capped)`、只跳 pipeline。无按票覆盖（15 票都吃全局值）。**省多少要等实测**：8/20 那种 3 次重扫的日子会砍掉 2 次（约 ¥0.9/日），但重扫是事件驱动的、天数分布不均，别拿单日推年化。
+⚠️ 本地 WSL 装不了 pytest（PEP 668 + 无 python3-venv），这次只跑了「用真实 loader 读 config.yaml」验证；但 `tests/test_tier1.py` 的 cap 用例全部自带显式值、不读 config.yaml，改出厂值动不到测试。
 
 ### ④ 成本构成（8/20 实测，可直接引用）
 | | ¥/日 | 占比 |
