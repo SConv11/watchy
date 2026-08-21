@@ -251,3 +251,31 @@ GPQA Diamond 91% / AA-LCR 66% / HLE 37% / Terminal-Bench 2.1 79% / SciCode 50% /
   （AA 跨 index 版本会重打分）。**没核实清楚，别引用这条。**
 - → **A/B 脚本仍要跑**，而且要同时量两件事：**决策一致性 + flash 在真实 prompt 上的实际输出 token**
   （后者正是基准测不出、又直接决定省多少钱的量）。
+
+### ❌ 定案：RM/PM `pro→flash` 否决（2026-08-21，用户补 AA-LCR + AA-Omniscience 数据后）
+
+**理由不是质量风险，是「根本不省钱、甚至更贵」。** flash 便宜 3×/token，但啰嗦到把价格优势吃光还倒贴。
+
+**三条独立证据同向**（都是 Max Effort）：
+| 来源 | flash / pro |
+|---|---|
+| Intelligence Index 总输出 token（210M / 130M） | **1.6×** |
+| **AA-Omniscience token（92M / 20M）** | **4.6×** → 按 $0.23 vs $0.69 折算 **flash 反而贵 1.53×** |
+| **AA-LCR 每任务成本（$0.14 / $0.05）** | **flash 贵 2.8×** |
+
+**质量侧**（gap 比 Intelligence Index 的 1 分大得多）：
+| | pro | flash | 差 |
+|---|---|---|---|
+| **AA-LCR**（长上下文推理 = RM/PM 的本职：综合 4 份分析师报告） | **75.3%** | 74.3% | 1.0pt（基本平手）|
+| **AA-Omniscience 准确率**（事实召回） | **49%** | 40% | **9pt** |
+| AA-Omniscience 总分 | **+1** | −14 | 15pt |
+| 幻觉率 | 95% | 92% | flash 略低（但它准确率也低 9pt）|
+
+→ **换过去 = 省不到钱 + 丢 9 个点的事实准确率。** RM/PM 是终审 + 要引用公司事实的节点，这个 trade 没有任何一侧划算。
+→ **`scripts/compare_rm_pm_models.py` 降级为低优先级**（不用跑了；真要跑也只是复核 flash 在真实 prompt 上的输出 token）。
+→ 这也**追认了当初 PM「保 pro」的建议**是对的，只是当时理由（质量风险）不如现在的理由（更贵）硬。
+
+⚠️ **数据里一处对不上，别当精确值用**：AA-LCR 页报的 token usage 是 3k(pro) vs 4k(flash)，
+只差 1.33× 却出现 2.8× 的每任务成本差 —— 用 3k/4k 反推 flash 应该**更便宜**(0.44×)。
+AA 的 cost/task 里显然还含别的（多轮/重试/输入侧）。**方向可信（三条证据同向），倍数不可信。**
+⚠️ AA 全部测 `Max Effort`；watchy 跑 `high`。啰嗦度的爆炸有可能是 max 档特有的。
