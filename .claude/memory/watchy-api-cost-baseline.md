@@ -286,3 +286,36 @@ CLAUDE.md / [[watchy-tier2-cadence-cost.md]] 记的"单票 +40%"是 TOKENCOST �
 可能是 Tier1 重扫多（每票每日上限 2，见 #23）／当天门控没咬／某个 Market Analyst 大输入回灌（EMR 193k 那类，见 issue #20）。
 **查法**：VPS 上 `journalctl -u watchy --since 2026-08-20 --until 2026-08-21 | grep TOKENCOST`，按 label 分 Tier1/Tier2 计数。
 ⚠️ 别用一次性 journalctl 拼凑统计（本文上面有踩坑记录），要导出全量再算。
+
+## 🔬 8/20 逐节点实测：三条结论推翻了旧的降本排序（2026-08-21）
+
+用户导出 8/20 全量 TOKENCOST（15 条 = 12 Tier2 + 3 Tier1）。**按 CNY 新非高峰价重算 = ¥8.23，账单 ¥8.24 —— 100% 对上**，
+TOKENCOST 现在可以直接当账单用（`_prices_at()` 改对了，见上）。
+
+### ① 8/20 为什么贵：不是 bug，是两件正常事叠加
+- **Tier2 跑了 12 票而非排程的 11 票**——`EMR`（mon/wed/fri）在周四也跑了，**止盈区豁免 cadence**（#28 设计如此）。
+- **3 次 Tier1 升级重扫**（COHR/NVT/CEG，18:15–18:28）。
+→ 15 条 pipeline 而不是典型的 11–12 条。**排查完毕，无需再查。**
+
+### ② 🚨 推理 token = **43% 的账单**（¥3.52/日），不是旧记的 16%
+两件事叠乘：7/31 重训把 reasoning 拉高 + 新计价 output 涨 2.25×（reasoning 按 output 计费）。
+- **flash：reason 396,810 / out 687,037 = 58% 的输出是思考**
+- **pro：reason 128,451 / out 151,212 = 85%！** RM/PM 的"答案"很短，钱几乎全花在思考上
+  （极端例：AMZN Research Manager out=9,674 其中 reason=9,156 = **95%**，$0.0226 是当票最贵节点）
+→ **thinking 现在是最大的单一成本池**。但 [[watchy-api-cost-baseline]] 上面记了：DeepSeek 只有 high/max 两档，
+  **没有中间档，关就是断崖**——所以这个池子大不等于好动，issue #27 只敢动 4 个 analyst。
+
+### ③ 🚨 Tier1 重扫**不再是"半价"**——现在是全量的 **79%**
+旧记"盘中 2 分析师重扫 ≈ 半价"**已作废**。实测 8/20：Tier1 均 ¥0.453 vs Tier2 均 ¥0.573。
+**根因：砍分析师只砍 flash，`pro`(RM+PM) 是每条 pipeline 都跑的固定地板，一点不缩。**
+反常识实例：**COHR 的 Tier1 重扫 pro 花 ¥0.263 > 同票 Tier2 全量的 pro ¥0.226**。
+→ `max_tier1_pipelines_per_day`（现 2）现在是**比以前值钱得多的纯配置杠杆**：Tier1 占 8/20 的 16%。
+
+### ④ 成本构成（8/20 实测，可直接引用）
+| | ¥/日 | 占比 |
+|---|---|---|
+| Tier 2（12 票） | 6.87 | 84% |
+| Tier 1（3 次重扫） | 1.36 | 16% |
+| flash | 5.19 | 63% |
+| **pro（每票仅 2 调用）** | **3.04** | **37%**（其中 output 独占全账单 25%） |
+| **其中 reasoning token** | **3.52** | **43%** |

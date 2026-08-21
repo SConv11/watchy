@@ -220,3 +220,34 @@ Tier1 advisor 是刻意 thinking off 的 —— 不显式关掉会每 30 分钟�
 - watchy 用浮动别名 → 刷新零运维，但**风险是静默行为漂移**，需要 canary（见 [[watchy-api-cost-baseline]]）。
 - CLAUDE.md 里"10:30 UTC 避开 DeepSeek 峰值计价"的理由**已过期**：V4 是平价，无分时档。排程本身仍合理。
 - 便宜高智力已不止 DeepSeek：Qwen3.7 Flash $0.03/$0.13、MiniMax M3 ~$0.30/$1.20（信源打架，另有 $0.60/$2.40）、GLM-5.2 $1.40/$4.40、Kimi K2.6。
+
+## DeepSeek V4 Pro vs V4 Flash — artificialanalysis.ai 实测对比（2026-08-21 查）
+
+为决策"RM/PM 从 pro 降到 flash"（pro 占账单 37%、每票仅 2 调用）先查第三方基准，再跑
+`scripts/compare_rm_pm_models.py`。
+
+### 关键数字
+| | V4 Pro 0813 | V4 Flash 0731 |
+|---|---|---|
+| **AA Intelligence Index**（v4.1.1, Max Effort） | **53** | **52** |
+| 参数 | 1600B / 49B active | 284B / 13B active |
+| **评测总输出 token（啰嗦度）** | **130M** | **210M**（AA 标注"very verbose"，中位数 100M） |
+| 输出速度 | 80.3 tok/s | 136.2 tok/s |
+| AA 报价 /1M | $0.69 | $0.23 |
+
+Flash 0731 分项（Pro 的分项 AA 页面未公开，**最关键的对比做不完整**）：
+GPQA Diamond 91% / AA-LCR 66% / HLE 37% / Terminal-Bench 2.1 79% / SciCode 50% / τ³-Banking 31% / CritPt 17% / GDPval-AA 1559 Elo。
+
+### 结论与陷阱
+- **智能差距只有 1 分**（53 vs 52）。7/31 重训把差距从 5 分（52 vs 47）压到 1 分——
+  **同一次重训既推高了成本，又几乎抹平了"付 3 倍钱买 pro"的理由。**
+- ⚠️ **但 flash 啰嗦 1.62×**（210M vs 130M）。watchy 是输出主导（reasoning 独占 43% 账单），
+  所以 pro→flash **不是省 3 倍**：按 AA 啰嗦度折算，pro 节点 ¥3.04→¥1.43，**只省 20% 账单不是 25%**。
+- ⚠️ **AA 测的是 `Max Effort`，watchy 跑的是 `high`（默认）。** high 档的差距**无人测过**，不能直接套用。
+- ⚠️ **AA 的啰嗦度方向与 watchy 自测矛盾**：AA 说 0731 重训后输出 token **降 12%**（206M vs 234M），
+  watchy 的账单却是重训后 flash 成本 **+35%**。工作负载/effort 都不同 → **1.62× 只能当指示性数字，
+  不能当 watchy 的预测值**。要钉死只能跑 A/B。
+- ⚠️ 发布文章说 Flash 0731"比 V4 Pro 高 6 分"、标题写"scores 50"，与当前对比页 Pro 53 / Flash 52 冲突
+  （AA 跨 index 版本会重打分）。**没核实清楚，别引用这条。**
+- → **A/B 脚本仍要跑**，而且要同时量两件事：**决策一致性 + flash 在真实 prompt 上的实际输出 token**
+  （后者正是基准测不出、又直接决定省多少钱的量）。
